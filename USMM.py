@@ -1,4 +1,4 @@
-import tkinter as tk
+from tkinter import *
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
 
@@ -14,8 +14,8 @@ root.rowconfigure(0, weight=1)
 # business logic
 
 # button to add game
-b_add_game = ttk.Button(main_frame, text="Add Game", bootstyle=SUCCESS)
-b_add_game.pack(side=LEFT, padx=5, pady=10)
+b_add_game = ttk.Button(main_frame, text="Add Game")
+b_add_game.pack(side=TOP, padx=5, pady=10)
 
     # add game via dialog box form
     # config file for app?
@@ -30,14 +30,40 @@ game_frame = ttk.Frame(main_frame, padding="3 3 12 12")
 
 # write function to pull list of games from db or config file
 games = ["Genshin", "Honkai", "Wuthering", "SF6", "ZZZ"]
+mods = ["Raiden","Shenhe", "Jean", "Barbara", "Keqing", "Chasca"]
+
+# def set_game_list():
+#     for game in games:
+#         # default toolbutton style
+#         select_game = ttk.Radiobutton(main_frame, text=game)
+#         select_game.pack(side=BOTTOM, padx=5, pady=10)
+
+# set_game_list()
+
+game_listb = Listbox(main_frame, listvariable=games, selectmode=SINGLE, height=10)
 
 def set_game_list():
+    i = 0
     for game in games:
-        # default toolbutton style
-        select_game = ttk.Radiobutton(main_frame, text=game, bootstyle="toolbutton")
-        select_game.pack(side=TOP, padx=5, pady=10)
+        i += 1
+        game_listb.insert(i, game)
 
 set_game_list()
+# game_listb.grid()
+game_listb.pack(side=BOTTOM, padx=5, pady=10)
+
+mod_listb = Listbox(main_frame, listvariable=mods, selectmode=SINGLE, height=10)
+mod_listb.pack(side=RIGHT, padx=5, pady=10)
+
+def display_mods(game):
+    i = 0
+    for mod in mods:
+        i += 1
+        mod_listb.insert(i, mod)
+
+l = ttk.Label(root, text="Starting...")
+# l.pack(side=BOTTOM, padx=5, pady=10)
+game_listb.bind('<<ListboxSelect>>', display_mods)
 
 
 root.mainloop()
