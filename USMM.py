@@ -1,6 +1,7 @@
 from tkinter import *
 import ttkbootstrap as ttk
 from ttkbootstrap.constants import *
+import sqlite3
 
 # Dev notes/planning:
     # add game via dialog box form
@@ -16,6 +17,7 @@ from ttkbootstrap.constants import *
 # delete mod folder button?
 # Associations: game has many modables and modables have many mods
 
+# tkinter setup
 root = ttk.Window(themename="superhero")
 root.title("Universal Skin Mod Manager")
 root.iconbitmap("controller.ico")
@@ -24,6 +26,11 @@ main_frame = ttk.Frame(root, padding="3 3 12 12")
 main_frame.grid(column=0, row=0, padx=5, pady=5, sticky=(N, W, E, S))
 root.columnconfigure(0, weight=1)
 root.rowconfigure(0, weight=1)
+
+# sqlite3 db setup
+con = sqlite3.connect("usmm.db")
+cur = con.cursor()
+cur.execute("CREATE TABLE IF NOT EXISTS game(title, appliedPath, storePath)")
 
 # temporary variables for testing in dev
 games = ["Genshin", "Honkai", "Wuthering", "SF6", "ZZZ"]
@@ -39,17 +46,26 @@ class Game:
 
 def add_game():
     title = game_t.get()
-    applied_path = game_mods_path.get()
-    store_path = game_modables_path.get()
+    applied_path = game_modables_path.get()
+    store_path = game_mods_path.get()
     game = Game(title, applied_path, store_path)
     print(vars(game))
-    games.append(game.title) # will eventually write to db or conf file
+    # games.append(game.title) # will eventually write to db or conf file
+    cur.execute("INSERT INTO Game VALUES (?, ?, ?)",
+                (title, applied_path, store_path))
+    con.commit()
+    # con.close()
+    game_query = cur.execute("""SELECT title, appliedPath, storePath 
+                             FROM game WHERE title=?""", (title,))
+    print(game_query.fetchone())
     # need to update the game list page somehow to show the newly added game
+    # clear form fields after submission or make a separate dialog that closes
 
 # consider refactor to join with display_modables**
 def set_game_list():
+    games_l_query = cur.execute("SELECT title FROM game").fetchall()
     i = 0
-    for game in games:
+    for game in games_l_query:
         i += 1
         game_listb.insert(i, game)
 
@@ -74,6 +90,8 @@ game_listb.grid(column=1, row=2, padx=5, pady=5)
 set_game_list()
 
 # form to add game
+# look into adding entry field validation
+    # https://tkdocs.com/tutorial/widgets.html#entry:~:text=leads%20us%20to...-,Validation,-Users%20can%20type
 game_title_l = ttk.Label(main_frame, text='Game Title')
 game_title_l.grid(column=1, row=3, padx=5, pady=5)
 game_t = StringVar()
