@@ -37,7 +37,6 @@ ex_applied_path = curr_path + "\\Example_Applied_Mods"
 ex_stored_path = curr_path + "\\Example_Stored_Mods"
 ex_modable_name = "Example_Modable_Char_or_Wep_etc"
 
-
 if os.path.exists(curr_path + "\\usmm.db") == False:
     os.mkdir("Example_Applied_Mods")
     os.mkdir("Example_Stored_Mods")
@@ -59,7 +58,6 @@ if cur.execute("SELECT 1 FROM game LIMIT 1").fetchone() == None:
 current_selected_game = []
 current_selected_modable = ""
 
-
 class Game:
     def __init__(self, title, applied_path, store_path):
         self.title = title
@@ -71,27 +69,41 @@ def add_game():
     applied_path = game_modables_path.get() #add validation for path and error dialog flow
     store_path = game_mods_path.get() #add validation for path and error dialog flow
     game = Game(title, applied_path, store_path)
-    # print(vars(game))
     cur.execute("INSERT INTO game VALUES (?, ?, ?)",
                 (title, applied_path, store_path))
     con.commit()
     game_list_lb.insert(ttk.END, game.title)
+    game_t.delete(0, ttk.END)
+    game_mods_path.delete(0, ttk.END)
+    game_modables_path.delete(0, ttk.END)
     return game
     # - may need to close the db connection at some point after committing but
     #  would have reopen later for other tasks potentially so not sure yet
     # con.close()
     # - clear form fields after submission or make a separate dialog that closes
 
-def delete_game():
-    print("delete game")
+def delete_game(title=()):
+    active_dir = current_selected_game[1]
+    print("*&*&*&*&*&*")
+    print(active_dir)
+    cur.execute("DELETE FROM game WHERE appliedPath=?", (active_dir,))
+    con.commit()
+    game_list_lb.delete(0, ttk.END)
+    global game_titles
+    game_titles = set_game_list()
+    game_list_lb.config(listvariable=game_titles)
+    modables_list_lb.delete(0, ttk.END)
+    mods_list_lb.delete(0, ttk.END)
+    active_mods_list_lb.delete(0, ttk.END)
+    return f"{active_dir} deleted"
+
 
 # write this function to fill in the entry fields of the add game form with paths
-def browse_folder():
+def browse_folder(entry):
     folder_path = filedialog.askdirectory()
     if folder_path:
-        print(folder_path)
-        # entry.delete(0, tk.END)
-        # entry.insert(0, folder_path)
+        entry.delete(0, ttk.END)
+        entry.insert(0, folder_path)
 
 def set_game_list():
     games_l_query = cur.execute("SELECT title FROM game").fetchall()
@@ -131,7 +143,7 @@ def display_modables(selected_game=()):
     active_mods_display(current_selected_game[1])
     return modables_list
 
-def refresh_modables():
+def refresh_modables(): # on further eval probably don't need this func
     print("refresh please")
 
 def display_mods(selected_modable=()):
@@ -141,9 +153,7 @@ def display_mods(selected_modable=()):
         selected_modable = modables_list_lb.get(0)
     else:
         selected_modable = modables_list_lb.get(selected_modable)
-    print(selected_modable)
     modable_path = f"{current_selected_game[0]}\\{selected_modable}"
-    print(modable_path)
     mods = get_folder_paths(modable_path)
     i = 0
     for mod in mods:
@@ -155,28 +165,19 @@ def display_mods(selected_modable=()):
     return mods_list
     
 def activate_mod(mod=()):
-    # print(current_selected_modable)
     active_path = current_selected_game[1]
-    # print(active_path)
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_modable}\\{mod}"
-    print(mod_path)
     active = active_mod(current_selected_modable, active_path)
-    print("**********")
-    print(active)
-    # stuff here to activate game by removing the currently active one and copying in the selected
     if os.path.exists(active):
         shutil.rmtree(active)
     else:
         print(active) # consider error handling
     destination_path = f"{active_path}\\{mod}"
-    print("+++++++++++++")
-    print(destination_path)
     shutil.copytree(mod_path, destination_path)
     active_mods_display(active_path)
     return "activated"
-
 
 def active_mod(modables_path, active_mods_path):
     active_mod = "no active mod for modable"
@@ -222,7 +223,7 @@ game_t.grid(column=1, row=2, padx=5, pady=5)
 game_path_l = ttk.Label(add_game_frame, text='Path to Applied Mods Folder')
 game_path_l.grid(column=1, sticky=(W), columnspan=2, row=3, padx=5, pady=1)
 # add browse button option for entering path**
-game_modables_path_browse_btn = ttk.Button(add_game_frame, text="Browse", command=browse_folder)
+game_modables_path_browse_btn = ttk.Button(add_game_frame, text="Browse", command= lambda: browse_folder(game_modables_path))
 game_modables_path_browse_btn.grid(column=2, row=4, sticky=(W), pady=5)
 game_modables_path = StringVar()
 game_modables_path = ttk.Entry(add_game_frame, textvariable=game_modables_path) #add validatecommand= param with function
@@ -230,7 +231,7 @@ game_modables_path.grid(column=1, sticky=(E), row=4, padx=5, pady=5)
 game_path_l = ttk.Label(add_game_frame, text='Path to Mod Storage Folder')
 game_path_l.grid(column=1, sticky=(W), columnspan=2, row=5, padx=5, pady=1)
 # add browse button option for entering path**
-game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse", command=browse_folder)
+game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse", command=lambda: browse_folder(game_mods_path))
 game_modable_mods_path_browse_btn.grid(column=2, row=6, sticky=(W), pady=5)
 game_mods_path = StringVar()
 game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path) #add validatecommand= param with function
@@ -271,7 +272,7 @@ modables_list_lb = Listbox(main_frame,
 modables_list_lb.grid(column=2, row=2, padx=5, pady=5)
 modables_list_lb.selection_set(first=0)
 modables_list_lb.bind('<<ListboxSelect>>', display_mods)
-refresh_modables_b = ttk.Button(main_frame, text="Refresh List", command=refresh_modables)
+refresh_modables_b = ttk.Button(main_frame, text="Refresh List", command=display_modables)
 refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=N)
 
 # mods for modable list display
