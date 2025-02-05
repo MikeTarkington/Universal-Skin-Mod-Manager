@@ -3,8 +3,10 @@ import shutil
 import sqlite3
 import re
 import configparser
+import webbrowser
 from tkinter import *
 from tkinter import filedialog
+from tkinter import messagebox
 import ttkbootstrap as ttk
 from ttkbootstrap import Style
 from ttkbootstrap.constants import *
@@ -52,30 +54,47 @@ class Game:
         self.applied_path = applied_path
         self.store_path = store_path
 
+def add_game():
+    title = game_t.get()
+    applied_path = game_modables_path.get()
+    store_path = game_mods_path.get()
+    check_game_form()
+    if game_validation():
+        game = Game(title, applied_path, store_path)
+        cur.execute("INSERT INTO game VALUES (?, ?, ?)",
+                    (title, applied_path, store_path))
+        con.commit()
+        game_list_lb.insert(ttk.END, game.title)
+        game_t.delete(0, ttk.END)
+        game_mods_path.delete(0, ttk.END)
+        game_modables_path.delete(0, ttk.END)
+    return game
+    # - may need to close the db connection at some point after committing but
+    #  would have reopen later for other tasks potentially so not sure yet
+    # con.close()
+    # - clear form fields after submission or make a separate dialog that closes
+
 def check_game_form():
     if game_t.get() and game_modables_path.get() and game_mods_path.get():
         b_add_game.config(state="normal")
     else:
         b_add_game.config(state="disabled")
 
-def add_game():
-    title = game_t.get() #validate string
-    applied_path = game_modables_path.get() #add validation for path and error dialog flow
-    store_path = game_mods_path.get() #add validation for path and error dialog flow
-    game = Game(title, applied_path, store_path)
-    cur.execute("INSERT INTO game VALUES (?, ?, ?)",
-                (title, applied_path, store_path))
-    con.commit()
-    game_list_lb.insert(ttk.END, game.title)
-    game_t.delete(0, ttk.END)
-    game_mods_path.delete(0, ttk.END)
-    game_modables_path.delete(0, ttk.END)
-    check_game_form()
-    return game
-    # - may need to close the db connection at some point after committing but
-    #  would have reopen later for other tasks potentially so not sure yet
-    # con.close()
-    # - clear form fields after submission or make a separate dialog that closes
+def game_validation():
+    if len(game_t.get()[0]) < 1:
+        msg = "Game title must be at least 1 character"
+        show_error(msg)
+    elif os.path.exists(game_modables_path.get()) == False:
+        msg = "Path to Applied Mods Folder does not exist"
+        show_error(msg)
+    elif os.path.exists(game_mods_path.get()) == False:
+        msg = "Path to Mod Storage Folder does not exist"
+        show_error(msg)
+    else:
+        return True
+
+def show_error(msg):
+    messagebox.showerror("Error", msg)
 
 def delete_game(title=()):
     active_dir = current_selected_game[1]
@@ -108,18 +127,11 @@ def set_game_list():
     game_titles = ttk.Variable(value=game_list_b)
     return game_titles
 
-# Returns a list of file paths for folders within the specified directory
-def get_folder_paths(folder_path):
-    paths = []
-    for modable in os.scandir(folder_path):
-        if modable.is_dir(): #after adding form validation should be able to remove condition
-            paths.append(modable.path)
-    return paths
-
 def display_modables(selected_game=()):
     modables_list_lb.delete(0, ttk.END)
     mods_list_lb.delete(0, ttk.END)
-    b_add_mod_info.config(state="disabled")
+    clear_mod_info()
+    add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
     deactivate_b.config(state="disabled")
     explore_modable.config(state="disabled")
@@ -143,9 +155,18 @@ def display_modables(selected_game=()):
     active_mods_display(current_selected_game[1])
     return modables_list
 
+# Returns a list of file paths for folders within the specified directory
+def get_folder_paths(folder_path):
+    paths = []
+    for modable in os.scandir(folder_path):
+        if modable.is_dir():
+            paths.append(modable.path)
+    return paths
+
 def display_mods(selected_modable=()):
     mods_list_lb.delete(0, ttk.END)
-    b_add_mod_info.config(state="disabled")
+    clear_mod_info()
+    add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
     deactivate_b.config(state="normal")
     explore_mod.config(state="disabled")
@@ -224,33 +245,49 @@ def add_mod_info(mod=()):
         mod_info_config.write(configfile)
     return "mod info saved"
 
-def display_mod_info(mod=()):
-    b_add_mod_info.config(state="normal")
+def display_mod_info_storage(mod=()):
+    add_mod_info_b.config(state="normal")
     activate_mod_b.config(state="normal")
-    deactivate_b.config(state="normal")
     explore_mod.config(state="normal")
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_modable}\\{mod}"
-    global mod_url, mod_notes
-    mod_url.delete(0, ttk.END)
-    mod_notes.delete("1.0", "end-1c")
-    # add some conditional logic to prevent KeyError when no ini file is present
+    populate_mod_info(mod_path)
+    preview_image("storage")
+
+def display_mod_info_active(mod=()):
+    add_mod_info_b.config(state="disabled")
+    activate_mod_b.config(state="disabled")
+    deactivate_b.config(state="normal")
+    mod_selection = active_mods_list_lb.curselection()
+    mod = active_mods_list_lb.get(mod_selection[0])
+    mod_path = f"{current_selected_game[1]}\\{mod}"
+    populate_mod_info(mod_path)
+    preview_image("active")
+
+def populate_mod_info(mod_path):
+    clear_mod_info()
     if os.path.exists(f"{mod_path}\\usmm_mod_info.ini"):        
+        global mod_url, mod_notes
+        mod_url.delete(0, ttk.END)
+        mod_notes.delete("1.0", "end-1c")
         mod_info_config = configparser.ConfigParser()
         mod_info_config.read(f"{mod_path}\\usmm_mod_info.ini")
         url = mod_info_config['Mod Info']['URL']
         notes = mod_info_config['Mod Info']['Notes']
         mod_url.insert(0, url)
         mod_notes.insert("1.0", notes)
-    preview_image()
-    return [mod_url, mod_notes]
 
-def preview_image(mod=()):
-    mod_selection = mods_list_lb.curselection()
+def preview_image(selection):
+    if selection == "storage":
+        mod_selection = mods_list_lb.curselection()
+        mod = mods_list_lb.get(mod_selection[0])
+        mod_path = f"{current_selected_modable}\\{mod}"
+    elif selection == "active":
+        mod_selection = active_mods_list_lb.curselection()
+        mod = active_mods_list_lb.get(mod_selection[0])
+        mod_path = f"{current_selected_game[1]}\\{mod}"
     global mod_preview_img
-    mod = mods_list_lb.get(mod_selection[0])
-    mod_path = f"{current_selected_modable}\\{mod}"
     img_found = False
     ext = [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff"]
     for e in ext:
@@ -267,6 +304,15 @@ def preview_image(mod=()):
         mod_preview_img = ImageTk.PhotoImage(img)
         mod_img_lb.config(image=mod_preview_img)
     return mod_preview_img
+
+def clear_mod_info():
+    mod_url.delete(0, ttk.END)
+    mod_notes.delete("1.0", "end-1c")
+    img = Image.open("defaultpreview.jpg")
+    img.thumbnail((500, 500))
+    mod_preview_img = ImageTk.PhotoImage(img)
+    mod_img_lb.config(image=mod_preview_img)
+    return "mod info cleared"
 
 def explore_folder(path_type):
     if path_type == "storage":
@@ -342,7 +388,7 @@ mods_list_lb = Listbox(control_frame,
                            )
 mods_list_lb.grid(column=3, row=2, padx=5, pady=5)
 mods_list_lb.selection_set(first=0)
-mods_list_lb.bind('<<ListboxSelect>>', display_mod_info)
+mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_storage)
 activate_mod_b = ttk.Button(control_frame, text="Activate", style="main_btn.TButton", command=activate_mod)
 activate_mod_b.grid(column=3, row=3, padx=5, pady=5, sticky=NW)
 activate_mod_b.config(state="disabled")
@@ -365,7 +411,7 @@ active_mods_list_lb = Listbox(active_games_frame,
                        )
 active_mods_list_lb.grid(column=1, row=2, padx=5, pady=5)
 active_mods_list_lb.selection_set(first=0)
-active_mods_list_lb.bind('<<ListboxSelect>>', display_mod_info) #give an argument to display mod info from active vs storage?
+active_mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_active)
 
 # utility buttons
 utility_frame = ttk.Frame(main_frame, padding="20 10 20 10", style="control_frame.TFrame")
@@ -409,9 +455,8 @@ add_game_frame.grid(column=1, row=4, sticky=SW, padx=10, pady=10)
 game_title_l = ttk.Label(add_game_frame, text='Game Title')
 game_title_l.grid(column=1, sticky=W, columnspan=2, row=1, padx=5, pady=5)
 game_t = StringVar()
-game_t = ttk.Entry(add_game_frame, textvariable=game_t) #add validatecommand= param with function
+game_t = ttk.Entry(add_game_frame, textvariable=game_t)
 game_t.grid(column=1, row=2, padx=5, pady=5)
-# game_t.bind("<KeyRelease>", lambda e: check_game_form())
 game_path_l = ttk.Label(add_game_frame, text='Path to Applied Mods Folder')
 game_path_l.grid(column=1, sticky=W, columnspan=2, row=3, padx=5, pady=1)
 game_modables_path_browse_btn = ttk.Button(add_game_frame,
@@ -420,9 +465,8 @@ game_modables_path_browse_btn = ttk.Button(add_game_frame,
                                            )
 game_modables_path_browse_btn.grid(column=2, row=4, sticky=W, pady=5)
 game_modables_path = StringVar()
-game_modables_path = ttk.Entry(add_game_frame, textvariable=game_modables_path) #add validatecommand= param with function
+game_modables_path = ttk.Entry(add_game_frame, textvariable=game_modables_path)
 game_modables_path.grid(column=1, sticky=E, row=4, padx=5, pady=5)
-# game_modables_path.bind("<KeyRelease>", lambda e: check_game_form())
 game_path_l = ttk.Label(add_game_frame, text='Path to Mod Storage Folder')
 game_path_l.grid(column=1, sticky=W, columnspan=2, row=5, padx=5, pady=1)
 game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse", 
@@ -430,33 +474,32 @@ game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse",
                                                )
 game_modable_mods_path_browse_btn.grid(column=2, row=6, sticky=W, pady=5)
 game_mods_path = StringVar()
-game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path) #add validatecommand= param with function
+game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path)
 game_mods_path.grid(column=1, sticky=E,row=6, padx=5, pady=5)
-# game_mods_path.bind("<KeyRelease>", lambda e: check_game_form())
-# submit form
-    # use validation to enable the button when the form is correctly complete
 b_add_game = ttk.Button(add_game_frame, text="Add Game", style="main_btn.TButton", command=add_game)
 b_add_game.grid(column=1, row=7, padx=5, pady=5)
 b_add_game.config(state="disabled")
 
-# mod info form
+# mod info form/display
 add_mod_inf = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
 add_mod_inf.grid(column=2, row=4, sticky=W, padx=10, pady=10)
 mod_url_l = ttk.Label(add_mod_inf, text='Mod URL')
 mod_url_l.grid(column=1, sticky=W, row=1, padx=5, pady=5)
 mod_url = StringVar()
-mod_url = ttk.Entry(add_mod_inf, textvariable=mod_url) #add validatecommand= param with function
+mod_url = ttk.Entry(add_mod_inf, textvariable=mod_url, width=17)
 mod_url.grid(column=1, row=2, sticky=W, padx=5, pady=5)
+mod_url_b = ttk.Button(add_mod_inf, text="Open",
+                       command=lambda: webbrowser.open(mod_url.get(), new=2)
+                       )
+mod_url_b.grid(column=1, row=2, sticky=E)
 mod_notes_add_l = ttk.Label(add_mod_inf, text='Notes (toggles, etc)')
 mod_notes_add_l.grid(column=1, sticky=W, row=3, padx=5, pady=1)
 mod_notes = StringVar()
-mod_notes = ttk.Text(add_mod_inf, width=25, height=14, wrap=ttk.WORD) #add validatecommand= param with function
+mod_notes = ttk.Text(add_mod_inf, width=25, height=14, wrap=ttk.WORD)
 mod_notes.grid(column=1, row=4, padx=5, pady=5)
-# submit form
-    # use validation to enable the button when the form is correctly complete
-b_add_mod_info = ttk.Button(add_mod_inf, text="Save Mod Info", style="main_btn.TButton", command=add_mod_info)
-b_add_mod_info.grid(column=1, row=7, padx=5, pady=5)
-b_add_mod_info.config(state="disabled")
+add_mod_info_b = ttk.Button(add_mod_inf, text="Save Mod Info", style="main_btn.TButton", command=add_mod_info)
+add_mod_info_b.grid(column=1, row=7, padx=5, pady=5)
+add_mod_info_b.config(state="disabled")
 
 # mod preview image display
 mod_img_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
