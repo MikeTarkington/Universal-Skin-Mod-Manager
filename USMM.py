@@ -22,16 +22,10 @@ main_frame = ttk.Frame(root, padding="10 10 10 10")
 main_frame.grid(column=0, row=0, padx=10, pady=10, sticky=(N, W, E, S))
 main_frame.columnconfigure(4, minsize=250)
 
-# setup default example data for db and create local folders for the game paths
+# setup default example data for db with local folders for the game paths
 curr_path = f"{os.getcwd()}"
-ex_applied_path = curr_path + "\\Example_Applied_Mods"
-ex_stored_path = curr_path + "\\Example_Stored_Mods"
-ex_modable_name = "Example_Modable_Char_or_Wep_etc"
-
-if os.path.exists(curr_path + "\\usmm.db") == False:
-    os.mkdir("Example_Applied_Mods")
-    os.mkdir("Example_Stored_Mods")
-    os.mkdir(os.path.join(ex_stored_path, ex_modable_name))
+ex_applied_path = curr_path + "\\Example_Applied_Mods-can-delete"
+ex_stored_path = curr_path + "\\Example_Stored_Mods-can-delete"
 
 # sqlite3 db setup
 con = sqlite3.connect("usmm.db")
@@ -40,7 +34,7 @@ cur.execute("CREATE TABLE IF NOT EXISTS game(title, appliedPath, storePath)")
 
 if cur.execute("SELECT 1 FROM game LIMIT 1").fetchone() == None:
     cur.execute("INSERT INTO game VALUES (?, ?, ?)",
-                    ("Example Title", ex_applied_path, ex_stored_path))
+                    ("Example Title *CLICK* (remove when done)", ex_applied_path, ex_stored_path))
     con.commit()
 
 
@@ -94,7 +88,7 @@ def game_validation():
         return True
 
 def show_error(msg):
-    messagebox.showerror("Error", msg)
+    messagebox.showerror("Error", msg, icon="error")
 
 def delete_game(title=()):
     active_dir = current_selected_game[1]
@@ -155,7 +149,6 @@ def display_modables(selected_game=()):
     active_mods_display(current_selected_game[1])
     return modables_list
 
-# Returns a list of file paths for folders within the specified directory
 def get_folder_paths(folder_path):
     paths = []
     for modable in os.scandir(folder_path):
@@ -195,8 +188,6 @@ def activate_mod(mod=()):
     active = active_mod(current_selected_modable, active_path)
     if os.path.exists(active):
         shutil.rmtree(active)
-    else:
-        print(active) # consider error handling
     destination_path = f"{active_path}\\{mod}"
     shutil.copytree(mod_path, destination_path)
     active_mods_display(active_path)
@@ -230,7 +221,7 @@ def deactivate_mod(event=()):
         shutil.rmtree(active)
         active_mods_display(active_path)
     else:
-        print("unable to deactivate") # consider error handling
+        show_error("No active mod to deactivate for modable")
     return f"deactivated {active}"
     
 def add_mod_info(mod=()):
@@ -489,10 +480,10 @@ mod_url = StringVar()
 mod_url = ttk.Entry(add_mod_inf, textvariable=mod_url, width=17)
 mod_url.grid(column=1, row=2, sticky=W, padx=5, pady=5)
 mod_url_b = ttk.Button(add_mod_inf, text="Open",
-                       command=lambda: webbrowser.open(mod_url.get(), new=2)
+                       command= lambda: webbrowser.open(mod_url.get(), new=2)
                        )
 mod_url_b.grid(column=1, row=2, sticky=E)
-mod_notes_add_l = ttk.Label(add_mod_inf, text='Notes (toggles, etc)')
+mod_notes_add_l = ttk.Label(add_mod_inf, text='Notes (toggles, install info, etc)')
 mod_notes_add_l.grid(column=1, sticky=W, row=3, padx=5, pady=1)
 mod_notes = StringVar()
 mod_notes = ttk.Text(add_mod_inf, width=25, height=14, wrap=ttk.WORD)
