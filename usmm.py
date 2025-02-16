@@ -2,8 +2,9 @@ import os
 import shutil
 import sqlite3
 import re
-import configparser
+import json
 import webbrowser
+from urllib.parse import urlparse
 from tkinter import *
 from tkinter import filedialog
 from tkinter import messagebox
@@ -12,12 +13,43 @@ from ttkbootstrap import Style
 from ttkbootstrap.constants import *
 from PIL import ImageTk, Image
 
+# Note to self: Command to bundle exe was `pyinstaller --onefile --windowed usmm.py`
+
+# potential additional "nice-to-have" features
+# - storage space consumption display
+# - logging for error tracking and bug reports
+# - custom temlate creation to switch between mod sets
+# - loading progress bar for activation/deactivation
+# - storage of mods in archives for a bit of space saving and ease of use
+# - store config for last selected game and modable etc
+# - script runner for mod fixes etc?
+# - mod versioning and update checking
+# - confict checking for active mods
+# - mod reload integration for games that support it?
+# - display size of files in mod info
+# - option to handles mods of various file types rather than just folders ie .pak, .zip, etc (remove requirement that a mod in the asset list be a dir path? get_folder_paths())
+#   - for this to work might be good to add a parameter to the game class that would indicate the mod file/folder type
+# - cycle through lists with up/down arrow keypress?
+# - is there a way to save toggled configs into storage?
+
+# ISSUES DISCOVERED FROM USAGE
+# DONE(changed to json)- ensure ini file edits are taken as string values or at least not able to affect the code. Receiving errors blocking saves when using some unusual characters like "down arrow" or ":""
+    # DONE - write myself a script to convert all ini files by the name usmm_mod_info.ini under a certain directory, and its sub ini file to json
+# DONE - stop the "open" button from opening another isntance of the app when there is no URL
+# - refresh button for "mods for asset" list
+# - frames in bottom row same height and N alignment
+# - active mods list box might need fixed size matching the main control frame
+# - add confirmation popup when someone clicks "remove game"
+# DONE - indicate active mod in the "mods for asset" list (hightlight when box is in focus?, edit the title to say "ACTIVE"?)
+# - logging for debugging
+# - show progress bar for local actions of the app
+# - show message for confirmation of actions outcome next to progress bar
+# - when mod is activated highlight it in the active list?  NOT IMPORTANT NOW SINCE "ACTIVE" moves it to top due to alpha ordering
 
 # tkinter setup
 root = ttk.Window(themename="superhero")
 root.title("Universal Skin Mod Manager")
 root.iconbitmap("controller.ico")
-
 main_frame = ttk.Frame(root, padding="10 10 10 10")
 main_frame.grid(column=0, row=0, padx=10, pady=10, sticky=(N, W, E, S))
 main_frame.columnconfigure(4, minsize=250)
@@ -179,8 +211,9 @@ def display_mods(selected_modable=()):
     global current_selected_modable
     current_selected_modable = modable_path
     return mods_list
-    
+
 def activate_mod(mod=()):
+    remove_active_tag()
     active_path = current_selected_game[1]
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
@@ -190,8 +223,17 @@ def activate_mod(mod=()):
         shutil.rmtree(active)
     destination_path = f"{active_path}\\{mod}"
     shutil.copytree(mod_path, destination_path)
+    shutil.move(mod_path, f"{current_selected_modable}\\ACTIVE-{mod}")
     active_mods_display(active_path)
+    display_mods()
     return "activated"
+
+def remove_active_tag():
+    for mod in os.scandir(current_selected_modable):
+        mod_folder_name = mod.path.rsplit("\\", 1)[-1]
+        dest_path = f"{current_selected_modable}\\{mod_folder_name[len("ACTIVE-"):]}"
+        if mod_folder_name.startswith("ACTIVE-"):
+            shutil.move(mod.path, dest_path)
 
 def active_mod(modables_path, active_mods_path):
     active_mod = "no active mod for modable"
@@ -215,6 +257,7 @@ def active_mods_display(active_mods_path):
     return mods_list
 
 def deactivate_mod(event=()):
+    remove_active_tag()
     active_path = current_selected_game[1]
     active = active_mod(current_selected_modable, active_path)
     if os.path.exists(active):
@@ -222,6 +265,7 @@ def deactivate_mod(event=()):
         active_mods_display(active_path)
     else:
         show_error("No active mod to deactivate for modable")
+    display_mods()
     return f"deactivated {active}"
     
 def add_mod_info(mod=()):
@@ -230,10 +274,9 @@ def add_mod_info(mod=()):
     mod_path = f"{current_selected_modable}\\{mod}"
     url = mod_url.get()
     notes = mod_notes.get("1.0", "end-1c")
-    mod_info_config = configparser.ConfigParser()
-    mod_info_config['Mod Info'] = {'URL': url, 'Notes': notes}
-    with open(f"{mod_path}\\usmm_mod_info.ini", 'w') as configfile:
-        mod_info_config.write(configfile)
+    data = {"mod_info": {"url": url, "notes": notes}}
+    with open(f"{mod_path}\\usmm_mod_info.json", "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
     return "mod info saved"
 
 def display_mod_info_storage(mod=()):
@@ -258,14 +301,14 @@ def display_mod_info_active(mod=()):
 
 def populate_mod_info(mod_path):
     clear_mod_info()
-    if os.path.exists(f"{mod_path}\\usmm_mod_info.ini"):        
+    if os.path.exists(f"{mod_path}\\usmm_mod_info.json"):        
         global mod_url, mod_notes
         mod_url.delete(0, ttk.END)
         mod_notes.delete("1.0", "end-1c")
-        mod_info_config = configparser.ConfigParser()
-        mod_info_config.read(f"{mod_path}\\usmm_mod_info.ini")
-        url = mod_info_config['Mod Info']['URL']
-        notes = mod_info_config['Mod Info']['Notes']
+        with open(f"{mod_path}\\usmm_mod_info.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            url = data["mod_info"]["url"]
+            notes = data["mod_info"]["notes"]
         mod_url.insert(0, url)
         mod_notes.insert("1.0", notes)
 
@@ -320,6 +363,13 @@ def explore_folder(path_type):
         print("invalid path type")
     os.startfile(path)
     return f"{path} opened"
+
+def mod_web(url):
+    parsed_url = urlparse(url)
+    if all([parsed_url.scheme, parsed_url.netloc]):
+        webbrowser.open(url, new=2)
+    else:
+        show_error("Invalid URL")
 
 
 # DISPLAY CONTENT
@@ -480,7 +530,7 @@ mod_url = StringVar()
 mod_url = ttk.Entry(add_mod_inf, textvariable=mod_url, width=17)
 mod_url.grid(column=1, row=2, sticky=W, padx=5, pady=5)
 mod_url_b = ttk.Button(add_mod_inf, text="Open",
-                       command= lambda: webbrowser.open(mod_url.get(), new=2)
+                       command= lambda: mod_web(mod_url.get())
                        )
 mod_url_b.grid(column=1, row=2, sticky=E)
 mod_notes_add_l = ttk.Label(add_mod_inf, text='Notes (toggles, install info, etc)')
