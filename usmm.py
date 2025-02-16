@@ -36,7 +36,7 @@ from PIL import ImageTk, Image
 # DONE(changed to json)- ensure ini file edits are taken as string values or at least not able to affect the code. Receiving errors blocking saves when using some unusual characters like "down arrow" or ":""
     # DONE - write myself a script to convert all ini files by the name usmm_mod_info.ini under a certain directory, and its sub ini file to json
 # DONE - stop the "open" button from opening another isntance of the app when there is no URL
-# - refresh button for "mods for asset" list
+# DONE - refresh button for "mods for asset" list
 # - frames in bottom row same height and N alignment
 # - active mods list box might need fixed size matching the main control frame
 # - add confirmation popup when someone clicks "remove game"
@@ -159,6 +159,7 @@ def display_modables(selected_game=()):
     clear_mod_info()
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
+    refresh_mods_b.config(state="disabled")
     deactivate_b.config(state="disabled")
     explore_modable.config(state="disabled")
     explore_mod.config(state="disabled")
@@ -193,6 +194,7 @@ def display_mods(selected_modable=()):
     clear_mod_info()
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
+    refresh_mods_b.config(state="normal")
     deactivate_b.config(state="normal")
     explore_mod.config(state="disabled")
     explore_modable.config(state="normal")
@@ -292,7 +294,8 @@ def display_mod_info_storage(mod=()):
 def display_mod_info_active(mod=()):
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
-    deactivate_b.config(state="normal")
+    refresh_mods_b.config(state="disabled")
+    deactivate_b.config(state="disabled")
     mod_selection = active_mods_list_lb.curselection()
     mod = active_mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_game[1]}\\{mod}"
@@ -430,11 +433,16 @@ mods_list_lb = Listbox(control_frame,
 mods_list_lb.grid(column=3, row=2, padx=5, pady=5)
 mods_list_lb.selection_set(first=0)
 mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_storage)
-activate_mod_b = ttk.Button(control_frame, text="Activate", style="main_btn.TButton", command=activate_mod)
-activate_mod_b.grid(column=3, row=3, padx=5, pady=5, sticky=NW)
+mod_button_frame = ttk.Frame(control_frame)
+mod_button_frame.grid(column=3, row=3, sticky=N)
+activate_mod_b = ttk.Button(mod_button_frame, text="Activate", style="main_btn.TButton", command=activate_mod)
+activate_mod_b.grid(column=1, row=1, padx=2, pady=5, sticky=N)
 activate_mod_b.config(state="disabled")
-deactivate_b = ttk.Button(control_frame, text="Deactivate", command=deactivate_mod)
-deactivate_b.grid(column=3, row=3, padx=5, pady=5, sticky=NE)
+refresh_mods_b = ttk.Button(mod_button_frame, text="Refresh", command=display_mods)
+refresh_mods_b.grid(column=2, row=1, padx=2, pady=5, sticky=N)
+refresh_mods_b.config(state="disabled")
+deactivate_b = ttk.Button(mod_button_frame, text="Deactivate", command=deactivate_mod)
+deactivate_b.grid(column=3, row=1, padx=2, pady=5, sticky=N)
 deactivate_b.config(state="disabled")
 
 # active mods for game list display
@@ -454,9 +462,15 @@ active_mods_list_lb.grid(column=1, row=2, padx=5, pady=5)
 active_mods_list_lb.selection_set(first=0)
 active_mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_active)
 
+# frame for utility buttons and add game form
+explore_add_frame = ttk.Frame(main_frame)
+explore_add_frame.grid(column=1, row=4, sticky=N)
+explore_add_frame.columnconfigure(1, weight=1, minsize=250)
+explore_add_frame.rowconfigure((1, 2), weight=1)
+
 # utility buttons
-utility_frame = ttk.Frame(main_frame, padding="20 10 20 10", style="control_frame.TFrame")
-utility_frame.grid(column=1, row=4, sticky=N, padx=10, pady=10)
+utility_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
+utility_frame.grid(column=1, row=1,sticky=N, padx=10, pady=10)
 utility_frame.columnconfigure(0, weight=1)
 utility_frame.rowconfigure(0, weight=1)
 utility_btn_l = ttk.Label(utility_frame, text='Explore Selection Folders')
@@ -491,8 +505,8 @@ explore_mod.grid(column=1, row=5, sticky=EW, pady=5)
 explore_mod.config(width=28, state="disabled")
 
 # add game form
-add_game_frame = ttk.Frame(main_frame, padding="20 10 20 10", style="control_frame.TFrame")
-add_game_frame.grid(column=1, row=4, sticky=SW, padx=10, pady=10)
+add_game_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
+add_game_frame.grid(column=1, row=3, sticky=SW, padx=10, pady=10)
 game_title_l = ttk.Label(add_game_frame, text='Game Title')
 game_title_l.grid(column=1, sticky=W, columnspan=2, row=1, padx=5, pady=5)
 game_t = StringVar()
@@ -523,7 +537,7 @@ b_add_game.config(state="disabled")
 
 # mod info form/display
 add_mod_inf = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
-add_mod_inf.grid(column=2, row=4, sticky=W, padx=10, pady=10)
+add_mod_inf.grid(column=2, row=4, sticky=NW, padx=10, pady=10)
 mod_url_l = ttk.Label(add_mod_inf, text='Mod URL')
 mod_url_l.grid(column=1, sticky=W, row=1, padx=5, pady=5)
 mod_url = StringVar()
@@ -544,7 +558,7 @@ add_mod_info_b.config(state="disabled")
 
 # mod preview image display
 mod_img_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
-mod_img_frame.grid(column=3, columnspan=3, row=4, sticky=W, padx=10, pady=10)
+mod_img_frame.grid(column=3, columnspan=3, row=4, sticky=NW, padx=10, pady=10)
 mod_img_frame.columnconfigure(1, weight=1, minsize=501)
 mod_img_frame.rowconfigure(2, weight=1, minsize=501)
 mod_img_l = ttk.Label(mod_img_frame, text='Mod Preview Image')
