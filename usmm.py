@@ -4,6 +4,7 @@ import sqlite3
 import re
 import json
 import webbrowser
+import threading
 from urllib.parse import urlparse
 from tkinter import *
 from tkinter import filedialog
@@ -38,8 +39,9 @@ from PIL import ImageTk, Image
 # DONE - stop the "open" button from opening another isntance of the app when there is no URL
 # DONE - refresh button for "mods for asset" list
 # - frames in bottom row same height and N alignment
+# DONE - refresh and deactivate buttons get disabled when selecting from active mod list but not renabled when selecting from mods list
 # - active mods list box might need fixed size matching the main control frame
-# - add confirmation popup when someone clicks "remove game"
+# DONE - add confirmation popup when someone clicks "remove game"
 # DONE - indicate active mod in the "mods for asset" list (hightlight when box is in focus?, edit the title to say "ACTIVE"?)
 # - logging for debugging
 # - show progress bar for local actions of the app
@@ -53,6 +55,8 @@ root.iconbitmap("controller.ico")
 main_frame = ttk.Frame(root, padding="10 10 10 10")
 main_frame.grid(column=0, row=0, padx=10, pady=10, sticky=(N, W, E, S))
 main_frame.columnconfigure(4, minsize=250)
+main_frame.rowconfigure(4, minsize=250)
+main_frame.rowconfigure(5, weight=0)
 
 # setup default example data for db with local folders for the game paths
 curr_path = f"{os.getcwd()}"
@@ -123,16 +127,20 @@ def show_error(msg):
     messagebox.showerror("Error", msg, icon="error")
 
 def delete_game(title=()):
-    active_dir = current_selected_game[1]
-    cur.execute("DELETE FROM game WHERE appliedPath=?", (active_dir,))
-    con.commit()
-    game_list_lb.delete(0, ttk.END)
-    global game_titles
-    game_titles = set_game_list()
-    game_list_lb.config(listvariable=game_titles)
-    modables_list_lb.delete(0, ttk.END)
-    mods_list_lb.delete(0, ttk.END)
-    active_mods_list_lb.delete(0, ttk.END)
+    title = game_list_lb.get(game_list_lb.curselection())
+    if messagebox.askyesno("Delete Game", f"Delete {title} from USMM?"):
+        active_dir = current_selected_game[1]
+        cur.execute("DELETE FROM game WHERE appliedPath=?", (active_dir,))
+        con.commit()
+        game_list_lb.delete(0, ttk.END)
+        global game_titles
+        game_titles = set_game_list()
+        game_list_lb.config(listvariable=game_titles)
+        modables_list_lb.delete(0, ttk.END)
+        mods_list_lb.delete(0, ttk.END)
+        active_mods_list_lb.delete(0, ttk.END)
+    else:
+        return "game deletion cancelled"
     return f"{active_dir} deleted"
 
 def browse_folder(entry):
@@ -228,7 +236,7 @@ def activate_mod(mod=()):
     shutil.move(mod_path, f"{current_selected_modable}\\ACTIVE-{mod}")
     active_mods_display(active_path)
     display_mods()
-    return "activated"
+    return f"activated {mod}"
 
 def remove_active_tag():
     for mod in os.scandir(current_selected_modable):
@@ -294,8 +302,6 @@ def display_mod_info_storage(mod=()):
 def display_mod_info_active(mod=()):
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
-    refresh_mods_b.config(state="disabled")
-    deactivate_b.config(state="disabled")
     mod_selection = active_mods_list_lb.curselection()
     mod = active_mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_game[1]}\\{mod}"
@@ -374,11 +380,24 @@ def mod_web(url):
     else:
         show_error("Invalid URL")
 
+def activation_thread():
+    threading.Thread(target=run_with_progress).start()
+
+def run_with_progress():
+    progress_bar["maximum"] = 100
+    progress_bar["value"] = 0
+    progress_bar.start()
+    status_label.config(text="Processing...")
+    status_label.config(text=activate_mod()) #handle progression for deactivate, add game, remove game, likely using conditional logic and arguments passed through thread activation
+    progress_bar["value"] = 100
+    progress_bar.stop()
+
 
 # DISPLAY CONTENT
 
 # style for the control frame
 ttk.Style().configure("control_frame.TFrame", relief="solid", border=1, bordercolor="#3e5059")
+ttk.Style().configure("footer_frame.TFrame", background="gray")
 ttk.Style().configure("main_btn.TButton", background="teal")
 ttk.Style().configure("alt_btn.TButton", background="slateblue")
 ttk.Style().configure("dull_btn.TButton", background="gray")
@@ -416,7 +435,7 @@ modables_list_lb = Listbox(control_frame,
 modables_list_lb.grid(column=2, row=2, padx=5, pady=5)
 modables_list_lb.selection_set(first=0)
 modables_list_lb.bind('<<ListboxSelect>>', display_mods)
-refresh_modables_b = ttk.Button(control_frame, text="Refresh List", command=display_modables)
+refresh_modables_b = ttk.Button(control_frame, text="Refresh", command=display_modables)
 refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=N)
 
 # mods for modable list display
@@ -435,7 +454,7 @@ mods_list_lb.selection_set(first=0)
 mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_storage)
 mod_button_frame = ttk.Frame(control_frame)
 mod_button_frame.grid(column=3, row=3, sticky=N)
-activate_mod_b = ttk.Button(mod_button_frame, text="Activate", style="main_btn.TButton", command=activate_mod)
+activate_mod_b = ttk.Button(mod_button_frame, text="Activate", style="main_btn.TButton", command=activation_thread)
 activate_mod_b.grid(column=1, row=1, padx=2, pady=5, sticky=N)
 activate_mod_b.config(state="disabled")
 refresh_mods_b = ttk.Button(mod_button_frame, text="Refresh", command=display_mods)
@@ -445,7 +464,7 @@ deactivate_b = ttk.Button(mod_button_frame, text="Deactivate", command=deactivat
 deactivate_b.grid(column=3, row=1, padx=2, pady=5, sticky=N)
 deactivate_b.config(state="disabled")
 
-# active mods for game list display
+# active mods for game display
 active_games_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
 active_games_frame.grid(column=4, row=1, padx=10, pady=10)
 active_mods_list = ttk.Variable(value=[])
@@ -561,12 +580,20 @@ mod_img_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_fram
 mod_img_frame.grid(column=3, columnspan=3, row=4, sticky=NW, padx=10, pady=10)
 mod_img_frame.columnconfigure(1, weight=1, minsize=501)
 mod_img_frame.rowconfigure(2, weight=1, minsize=501)
-mod_img_l = ttk.Label(mod_img_frame, text='Mod Preview Image')
+mod_img_l = ttk.Label(mod_img_frame, text="Mod Preview Image")
 mod_img_l.grid(column=1, sticky=(N, W, E, S), row=1, padx=5, pady=5)
 mod_default_preview_img = Image.open("defaultpreview.jpg")
 mod_default_preview_img.thumbnail((500, 500))
 mod_preview_img = ImageTk.PhotoImage(mod_default_preview_img)
 mod_img_lb = ttk.Label(mod_img_frame, image=mod_preview_img)
 mod_img_lb.grid(column=1, row=2)
+
+# progress bar and status info
+status_frame = ttk.Frame(main_frame, height=20,style="control_frame.TFrame")
+status_frame.grid(column=1, row=5, columnspan=4, sticky="sew")
+progress_bar = ttk.Progressbar(status_frame, orient="horizontal", length=100, mode="determinate")
+progress_bar.grid(column=1, row=1, padx=10, pady=10)
+status_label = ttk.Label(status_frame, text="Idle")
+status_label.grid(column=2, row=1, padx=10, pady=10)
 
 root.mainloop()
