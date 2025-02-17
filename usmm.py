@@ -39,14 +39,14 @@ from PIL import ImageTk, Image
 # DONE - stop the "open" button from opening another isntance of the app when there is no URL
 # DONE - refresh button for "mods for asset" list
 # - frames in bottom row same height and N alignment
-# DONE - refresh and deactivate buttons get disabled when selecting from active mod list but not renabled when selecting from mods list
+# DONE- refresh and deactivate buttons get disabled when selecting from active mod list but not renabled when selecting from mods list
 # - active mods list box might need fixed size matching the main control frame
 # DONE - add confirmation popup when someone clicks "remove game"
 # DONE - indicate active mod in the "mods for asset" list (hightlight when box is in focus?, edit the title to say "ACTIVE"?)
 # - logging for debugging
-# - show progress bar for local actions of the app
-# - show message for confirmation of actions outcome next to progress bar
-# - when mod is activated highlight it in the active list?  NOT IMPORTANT NOW SINCE "ACTIVE" moves it to top due to alpha ordering
+# DONE - show progress bar for local actions of the app
+# DONE - show message for confirmation of actions outcome next to progress bar
+# DONE - when mod is activated highlight it in the active list?  NOT IMPORTANT NOW SINCE "ACTIVE" moves it to top due to alpha ordering
 
 # tkinter setup
 root = ttk.Window(themename="superhero")
@@ -72,7 +72,7 @@ if cur.execute("SELECT 1 FROM game LIMIT 1").fetchone() == None:
     cur.execute("INSERT INTO game VALUES (?, ?, ?)",
                     ("Example Title *CLICK* (remove when done)", ex_applied_path, ex_stored_path))
     con.commit()
-
+cur.close()
 
 # BUSINESS LOGIC
 current_selected_game = []
@@ -85,6 +85,8 @@ class Game:
         self.store_path = store_path
 
 def add_game():
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
     title = game_t.get()
     applied_path = game_modables_path.get()
     store_path = game_mods_path.get()
@@ -98,11 +100,8 @@ def add_game():
         game_t.delete(0, ttk.END)
         game_mods_path.delete(0, ttk.END)
         game_modables_path.delete(0, ttk.END)
-    return game
-    # - may need to close the db connection at some point after committing but
-    #  would have reopen later for other tasks potentially so not sure yet
-    # con.close()
-    # - clear form fields after submission or make a separate dialog that closes
+    con.close()
+    return f"{game.title} added"
 
 def check_game_form():
     if game_t.get() and game_modables_path.get() and game_mods_path.get():
@@ -127,6 +126,8 @@ def show_error(msg):
     messagebox.showerror("Error", msg, icon="error")
 
 def delete_game(title=()):
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
     title = game_list_lb.get(game_list_lb.curselection())
     if messagebox.askyesno("Delete Game", f"Delete {title} from USMM?"):
         active_dir = current_selected_game[1]
@@ -141,7 +142,8 @@ def delete_game(title=()):
         active_mods_list_lb.delete(0, ttk.END)
     else:
         return "game deletion cancelled"
-    return f"{active_dir} deleted"
+    con.close()
+    return f"{title} removed from USMM"
 
 def browse_folder(entry):
     folder_path = filedialog.askdirectory()
@@ -152,6 +154,8 @@ def browse_folder(entry):
     return folder_path
 
 def set_game_list():
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
     games_l_query = cur.execute("SELECT title FROM game").fetchall()
     game_list_b = []
     i = 0
@@ -159,9 +163,12 @@ def set_game_list():
         game_list_b.insert(i, game[0])
         i += 1
     game_titles = ttk.Variable(value=game_list_b)
+    con.close()
     return game_titles
 
 def display_modables(selected_game=()):
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
     modables_list_lb.delete(0, ttk.END)
     mods_list_lb.delete(0, ttk.END)
     clear_mod_info()
@@ -188,6 +195,7 @@ def display_modables(selected_game=()):
     global current_selected_game
     current_selected_game = game
     active_mods_display(current_selected_game[1])
+    con.close()
     return modables_list
 
 def get_folder_paths(folder_path):
@@ -236,7 +244,7 @@ def activate_mod(mod=()):
     shutil.move(mod_path, f"{current_selected_modable}\\ACTIVE-{mod}")
     active_mods_display(active_path)
     display_mods()
-    return f"activated {mod}"
+    return f"Activated {mod}"
 
 def remove_active_tag():
     for mod in os.scandir(current_selected_modable):
@@ -276,7 +284,7 @@ def deactivate_mod(event=()):
     else:
         show_error("No active mod to deactivate for modable")
     display_mods()
-    return f"deactivated {active}"
+    return f"Deactivated {active.rsplit("\\", 1)[-1]}"
     
 def add_mod_info(mod=()):
     mod_selection = mods_list_lb.curselection()
@@ -287,7 +295,7 @@ def add_mod_info(mod=()):
     data = {"mod_info": {"url": url, "notes": notes}}
     with open(f"{mod_path}\\usmm_mod_info.json", "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
-    return "mod info saved"
+    return f"Saved {mod} info"
 
 def display_mod_info_storage(mod=()):
     add_mod_info_b.config(state="normal")
@@ -380,15 +388,24 @@ def mod_web(url):
     else:
         show_error("Invalid URL")
 
-def activation_thread():
-    threading.Thread(target=run_with_progress).start()
+def progress_thread(command):
+    threading.Thread(target=run_with_progress, args=(command,)).start()
 
-def run_with_progress():
+def run_with_progress(command):
     progress_bar["maximum"] = 100
     progress_bar["value"] = 0
     progress_bar.start()
     status_label.config(text="Processing...")
-    status_label.config(text=activate_mod()) #handle progression for deactivate, add game, remove game, likely using conditional logic and arguments passed through thread activation
+    if command == "activate":
+        status_label.config(text=activate_mod()) #handle progression for deactivate, add game, remove game, likely using conditional logic and arguments passed through thread activation
+    elif command == "deactivate":
+        status_label.config(text=deactivate_mod())
+    elif command == "add_game":
+        status_label.config(text=add_game())
+    elif command == "remove_game":
+        status_label.config(text=delete_game())
+    elif command == "save_mod_info":
+        status_label.config(text=add_mod_info())
     progress_bar["value"] = 100
     progress_bar.stop()
 
@@ -418,7 +435,11 @@ game_list_lb = Listbox(control_frame,
 game_list_lb.grid(column=1, row=2, padx=5, pady=5)
 game_list_lb.selection_set(first=0)
 game_list_lb.bind('<<ListboxSelect>>', display_modables)
-remove_game = ttk.Button(control_frame, text="Remove Game", style="dull_btn.TButton", command=delete_game)
+remove_game = ttk.Button(control_frame,
+                         text="Remove Game",
+                         style="dull_btn.TButton",
+                         command=lambda: progress_thread("remove_game")
+                         )
 remove_game.grid(column=1, row=3, padx=5, pady=5, sticky=N)
 
 # modable list display
@@ -454,13 +475,20 @@ mods_list_lb.selection_set(first=0)
 mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_storage)
 mod_button_frame = ttk.Frame(control_frame)
 mod_button_frame.grid(column=3, row=3, sticky=N)
-activate_mod_b = ttk.Button(mod_button_frame, text="Activate", style="main_btn.TButton", command=activation_thread)
+activate_mod_b = ttk.Button(mod_button_frame,
+                            text="Activate",
+                            style="main_btn.TButton",
+                            command=lambda: progress_thread("activate")
+                            )
 activate_mod_b.grid(column=1, row=1, padx=2, pady=5, sticky=N)
 activate_mod_b.config(state="disabled")
 refresh_mods_b = ttk.Button(mod_button_frame, text="Refresh", command=display_mods)
 refresh_mods_b.grid(column=2, row=1, padx=2, pady=5, sticky=N)
 refresh_mods_b.config(state="disabled")
-deactivate_b = ttk.Button(mod_button_frame, text="Deactivate", command=deactivate_mod)
+deactivate_b = ttk.Button(mod_button_frame,
+                          text="Deactivate",
+                          command=lambda: progress_thread("deactivate")
+                          )
 deactivate_b.grid(column=3, row=1, padx=2, pady=5, sticky=N)
 deactivate_b.config(state="disabled")
 
@@ -550,7 +578,11 @@ game_modable_mods_path_browse_btn.grid(column=2, row=6, sticky=W, pady=5)
 game_mods_path = StringVar()
 game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path)
 game_mods_path.grid(column=1, sticky=E,row=6, padx=5, pady=5)
-b_add_game = ttk.Button(add_game_frame, text="Add Game", style="main_btn.TButton", command=add_game)
+b_add_game = ttk.Button(add_game_frame,
+                        text="Add Game",
+                        style="main_btn.TButton",
+                        command=lambda: progress_thread("add_game")
+                        )
 b_add_game.grid(column=1, row=7, padx=5, pady=5)
 b_add_game.config(state="disabled")
 
@@ -571,7 +603,11 @@ mod_notes_add_l.grid(column=1, sticky=W, row=3, padx=5, pady=1)
 mod_notes = StringVar()
 mod_notes = ttk.Text(add_mod_inf, width=25, height=14, wrap=ttk.WORD)
 mod_notes.grid(column=1, row=4, padx=5, pady=5)
-add_mod_info_b = ttk.Button(add_mod_inf, text="Save Mod Info", style="main_btn.TButton", command=add_mod_info)
+add_mod_info_b = ttk.Button(add_mod_inf,
+                            text="Save Mod Info",
+                            style="main_btn.TButton",
+                            command=lambda: progress_thread("save_mod_info")
+                            )
 add_mod_info_b.grid(column=1, row=7, padx=5, pady=5)
 add_mod_info_b.config(state="disabled")
 
