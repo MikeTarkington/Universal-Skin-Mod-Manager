@@ -17,33 +17,31 @@ from PIL import ImageTk, Image
 # Note to self: Command to bundle exe was `pyinstaller --onefile --windowed usmm.py`
 
 # potential additional "nice-to-have" features
-# - storage space consumption display
 # - logging for error tracking and bug reports
 # - custom temlate creation to switch between mod sets
-# - loading progress bar for activation/deactivation
 # - storage of mods in archives for a bit of space saving and ease of use
 # - store config for last selected game and modable etc
 # - script runner for mod fixes etc?
 # - mod versioning and update checking
 # - confict checking for active mods
 # - mod reload integration for games that support it?
-# - display size of files in mod info
 # - option to handles mods of various file types rather than just folders ie .pak, .zip, etc (remove requirement that a mod in the asset list be a dir path? get_folder_paths())
 #   - for this to work might be good to add a parameter to the game class that would indicate the mod file/folder type
 # - cycle through lists with up/down arrow keypress?
 # - is there a way to save toggled configs into storage?
 
 # ISSUES DISCOVERED FROM USAGE
+# - logging for debugging
+# - frames in bottom row same height and N alignment
+# - active mods list box might need fixed size matching the main control frame
 # DONE(changed to json)- ensure ini file edits are taken as string values or at least not able to affect the code. Receiving errors blocking saves when using some unusual characters like "down arrow" or ":""
+# DONE - storage space consumption display
     # DONE - write myself a script to convert all ini files by the name usmm_mod_info.ini under a certain directory, and its sub ini file to json
 # DONE - stop the "open" button from opening another isntance of the app when there is no URL
 # DONE - refresh button for "mods for asset" list
-# - frames in bottom row same height and N alignment
 # DONE- refresh and deactivate buttons get disabled when selecting from active mod list but not renabled when selecting from mods list
-# - active mods list box might need fixed size matching the main control frame
 # DONE - add confirmation popup when someone clicks "remove game"
 # DONE - indicate active mod in the "mods for asset" list (hightlight when box is in focus?, edit the title to say "ACTIVE"?)
-# - logging for debugging
 # DONE - show progress bar for local actions of the app
 # DONE - show message for confirmation of actions outcome next to progress bar
 # DONE - when mod is activated highlight it in the active list?  NOT IMPORTANT NOW SINCE "ACTIVE" moves it to top due to alpha ordering
@@ -195,6 +193,10 @@ def display_modables(selected_game=()):
     global current_selected_game
     current_selected_game = game
     active_mods_display(current_selected_game[1])
+    strg_consume_lbl.config(text=f"Storage: {get_dir_size_in_mb(current_selected_game[0])}")
+    actv_consume_lbl.config(text=f"Applied: {get_dir_size_in_mb(current_selected_game[1])}")
+    mdble_consume_lbl.config(text=f"Modable: unselected")
+    mod_consume_lbl.config(text=f"Mod: unselected")
     con.close()
     return modables_list
 
@@ -228,6 +230,8 @@ def display_mods(selected_modable=()):
     mods_list = ttk.Variable(value=mods_list_lb)
     global current_selected_modable
     current_selected_modable = modable_path
+    mdble_consume_lbl.config(text=f"Modable: {get_dir_size_in_mb(modable_path)}")
+    mod_consume_lbl.config(text=f"Mod: unselected")
     return mods_list
 
 def activate_mod(mod=()):
@@ -305,6 +309,7 @@ def display_mod_info_storage(mod=()):
     mod = mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_modable}\\{mod}"
     populate_mod_info(mod_path)
+    mod_consume_lbl.config(text=f"Mod: {get_dir_size_in_mb(mod_path)}")
     preview_image("storage")
 
 def display_mod_info_active(mod=()):
@@ -397,7 +402,7 @@ def run_with_progress(command):
     progress_bar.start()
     status_label.config(text="Processing...")
     if command == "activate":
-        status_label.config(text=activate_mod()) #handle progression for deactivate, add game, remove game, likely using conditional logic and arguments passed through thread activation
+        status_label.config(text=activate_mod())
     elif command == "deactivate":
         status_label.config(text=deactivate_mod())
     elif command == "add_game":
@@ -408,6 +413,14 @@ def run_with_progress(command):
         status_label.config(text=add_mod_info())
     progress_bar["value"] = 100
     progress_bar.stop()
+
+def get_dir_size_in_mb(dir_path):
+    total_size_bytes = 0
+    for dirpath, dirnames, filenames in os.walk(dir_path):
+        for filename in filenames:
+            file_path = os.path.join(dirpath, filename)
+            total_size_bytes += os.path.getsize(file_path)
+    return f"{round(total_size_bytes / (1024 * 1024)):,}mb"
 
 
 # DISPLAY CONTENT
@@ -512,13 +525,13 @@ active_mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_active)
 # frame for utility buttons and add game form
 explore_add_frame = ttk.Frame(main_frame)
 explore_add_frame.grid(column=1, row=4, sticky=N)
-explore_add_frame.columnconfigure(1, weight=1, minsize=250)
+explore_add_frame.columnconfigure(1, weight=1, minsize=250) #weight values creating extra spaces?
 explore_add_frame.rowconfigure((1, 2), weight=1)
 
 # utility buttons
 utility_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
 utility_frame.grid(column=1, row=1,sticky=N, padx=10, pady=10)
-utility_frame.columnconfigure(0, weight=1)
+utility_frame.columnconfigure(0, weight=1) #weight values creating extra spaces?
 utility_frame.rowconfigure(0, weight=1)
 utility_btn_l = ttk.Label(utility_frame, text='Explore Selection Folders')
 utility_btn_l.grid(column=1, row=1, sticky=EW)
@@ -614,7 +627,7 @@ add_mod_info_b.config(state="disabled")
 # mod preview image display
 mod_img_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
 mod_img_frame.grid(column=3, columnspan=3, row=4, sticky=NW, padx=10, pady=10)
-mod_img_frame.columnconfigure(1, weight=1, minsize=501)
+mod_img_frame.columnconfigure(1, weight=1, minsize=501) #weight values creating extra spaces?
 mod_img_frame.rowconfigure(2, weight=1, minsize=501)
 mod_img_l = ttk.Label(mod_img_frame, text="Mod Preview Image")
 mod_img_l.grid(column=1, sticky=(N, W, E, S), row=1, padx=5, pady=5)
@@ -625,11 +638,23 @@ mod_img_lb = ttk.Label(mod_img_frame, image=mod_preview_img)
 mod_img_lb.grid(column=1, row=2)
 
 # progress bar and status info
-status_frame = ttk.Frame(main_frame, height=20,style="control_frame.TFrame")
+status_frame = ttk.Frame(main_frame, height=20, style="control_frame.TFrame")
 status_frame.grid(column=1, row=5, columnspan=4, sticky="sew")
+status_frame.columnconfigure(2, minsize=400)
+status_frame.columnconfigure((3, 4, 5, 6), minsize=65)
 progress_bar = ttk.Progressbar(status_frame, orient="horizontal", length=100, mode="determinate")
 progress_bar.grid(column=1, row=1, padx=10, pady=10)
 status_label = ttk.Label(status_frame, text="Idle")
-status_label.grid(column=2, row=1, padx=10, pady=10)
+status_label.grid(column=2, row=1, sticky=W, padx=10, pady=10)
+
+# storage consumption
+strg_consume_lbl = ttk.Label(status_frame, text=f"Storage: unselected")
+strg_consume_lbl.grid(column=3, row=1, sticky=E, padx=10, pady=10)
+actv_consume_lbl = ttk.Label(status_frame, text=f"Applied: unselected")
+actv_consume_lbl.grid(column=4, row=1, sticky=E, padx=10, pady=10)
+mdble_consume_lbl = ttk.Label(status_frame, text=f"Modable: unselected")
+mdble_consume_lbl.grid(column=5, row=1, sticky=E, padx=10, pady=10)
+mod_consume_lbl = ttk.Label(status_frame, text=f"Mod: unselected")
+mod_consume_lbl.grid(column=6, row=1, sticky=E, padx=10, pady=10)
 
 root.mainloop()
