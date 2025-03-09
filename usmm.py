@@ -5,6 +5,11 @@ import re
 import json
 import webbrowser
 import threading
+import functools
+import traceback
+import logging
+import logging.config
+from pythonjsonlogger.json import JsonFormatter
 from urllib.parse import urlparse
 from tkinter import *
 from tkinter import filedialog
@@ -17,23 +22,31 @@ from PIL import ImageTk, Image
 # Note to self: Command to bundle exe was `pyinstaller --onefile --windowed usmm.py`
 
 # potential additional "nice-to-have" features
-# - logging for error tracking and bug reports
-# - custom temlate creation to switch between mod sets
+# - script runner that can target a specific directory, storage, modable, mod, active
+# - explore potential api integrations for gamebanana and nexusmods
+# - copy readme content to mod info notes by default?
+# - custom template creation to switch between mod sets
 # - storage of mods in archives for a bit of space saving and ease of use
 # - store config for last selected game and modable etc
-# - script runner for mod fixes etc?
 # - mod versioning and update checking
 # - confict checking for active mods
 # - mod reload integration for games that support it?
-# - option to handles mods of various file types rather than just folders ie .pak, .zip, etc (remove requirement that a mod in the asset list be a dir path? get_folder_paths())
+# - option to handle mods of various file types rather than just folders ie .pak, .zip, etc (remove requirement that a mod in the asset list be a dir path? get_folder_paths())
 #   - for this to work might be good to add a parameter to the game class that would indicate the mod file/folder type
+#   - consider that some games are modded by having files unpacked into a dir where they are overwritten so perhaps we store a backup of the originals and a record of unpacked files in order to remove them on deactivation
 # - cycle through lists with up/down arrow keypress?
 # - is there a way to save toggled configs into storage?
 
 # ISSUES DISCOVERED FROM USAGE
+# - when activating a mod that is already active, it seems the progress bar is stuck and that perhaps the mod is deactivated but not properly activated... investigate and allow for reactivating of a mod
+# - deactivate/reactivate all button for active mods getting fresh versions from storage?
+# - find better way to adjust image size to  cell so that proportions of are maintained or consider setting image sizes based on screen resolution
+# - consider scaling UI based on screen resolution?
 # - logging for debugging
+# - investigate issue of genshin not having its storage or applied mods folder sizes shown in the status bar (inspect the db)
 # - frames in bottom row same height and N alignment
 # - active mods list box might need fixed size matching the main control frame
+# DONE - make sure that if game folders are moved or deleted it doesn't break operations such as displaying active or stored mods and deleting games... os.path.exists() might be a good option. ensure titles are unique and use them for deletions?
 # DONE(changed to json)- ensure ini file edits are taken as string values or at least not able to affect the code. Receiving errors blocking saves when using some unusual characters like "down arrow" or ":""
 # DONE - storage space consumption display
     # DONE - write myself a script to convert all ini files by the name usmm_mod_info.ini under a certain directory, and its sub ini file to json
@@ -45,6 +58,29 @@ from PIL import ImageTk, Image
 # DONE - show progress bar for local actions of the app
 # DONE - show message for confirmation of actions outcome next to progress bar
 # DONE - when mod is activated highlight it in the active list?  NOT IMPORTANT NOW SINCE "ACTIVE" moves it to top due to alpha ordering
+
+# setup logging with json configs and non-blocking handlers added via decorator
+with open('logging_config.json', 'r') as f:
+    logging_config = json.load(f)
+logging.config.dictConfig(logging_config)
+logger = logging.getLogger()
+
+def logging_decorator(func):
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            threading.Thread(target=logger.info, args=(f"Running {func.__name__}",)).start()
+            return func(*args, **kwargs)
+        except Exception as e:
+            threading.Thread(
+                target=logger.error, args=(
+                    f"Exception in {func.__name__}: {e}\n{traceback.format_exc()}",
+                    )
+                ).start()
+            raise
+
+    return wrapper
+
 
 # tkinter setup
 root = ttk.Window(themename="superhero")
@@ -82,6 +118,7 @@ class Game:
         self.applied_path = applied_path
         self.store_path = store_path
 
+@logging_decorator
 def add_game():
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
@@ -123,13 +160,14 @@ def game_validation():
 def show_error(msg):
     messagebox.showerror("Error", msg, icon="error")
 
+@logging_decorator
 def delete_game(title=()):
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
     title = game_list_lb.get(game_list_lb.curselection())
     if messagebox.askyesno("Delete Game", f"Delete {title} from USMM?"):
-        active_dir = current_selected_game[1]
-        cur.execute("DELETE FROM game WHERE appliedPath=?", (active_dir,))
+        # active_dir = current_selected_game[1]
+        cur.execute("DELETE FROM game WHERE title=?", (title,))
         con.commit()
         game_list_lb.delete(0, ttk.END)
         global game_titles
@@ -151,6 +189,7 @@ def browse_folder(entry):
     check_game_form()
     return folder_path
 
+@logging_decorator
 def set_game_list():
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
@@ -164,9 +203,8 @@ def set_game_list():
     con.close()
     return game_titles
 
+@logging_decorator
 def display_modables(selected_game=()):
-    con = sqlite3.connect("usmm.db")
-    cur = con.cursor()
     modables_list_lb.delete(0, ttk.END)
     mods_list_lb.delete(0, ttk.END)
     clear_mod_info()
@@ -183,30 +221,34 @@ def display_modables(selected_game=()):
         selected_title = game_list_lb.get(0)
     else:
         selected_title = game_list_lb.get(selected_game)
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
     game = cur.execute("SELECT storePath, appliedPath FROM game WHERE title=?", (selected_title,)).fetchone()
-    modables = get_folder_paths(game[0])
-    i = 0
-    for modable in modables:
-        modables_list_lb.insert(i, modable.rsplit("\\", 1)[-1])
-        i += 1
-    modables_list = ttk.Variable(value=modables_list_lb)
-    global current_selected_game
-    current_selected_game = game
-    active_mods_display(current_selected_game[1])
-    strg_consume_lbl.config(text=f"Storage: {get_dir_size_in_mb(current_selected_game[0])}")
-    actv_consume_lbl.config(text=f"Applied: {get_dir_size_in_mb(current_selected_game[1])}")
-    mdble_consume_lbl.config(text=f"Modable: unselected")
-    mod_consume_lbl.config(text=f"Mod: unselected")
     con.close()
+    if path_exists(game[0]):
+        modables = get_folder_paths(game[0])
+        i = 0
+        for modable in modables:
+            modables_list_lb.insert(i, modable.rsplit("\\", 1)[-1])
+            i += 1
+        modables_list = ttk.Variable(value=modables_list_lb)
+        global current_selected_game
+        current_selected_game = game
+        active_mods_display(current_selected_game[1])
+        strg_consume_lbl.config(text=f"Storage: {get_dir_size_in_mb(current_selected_game[0])}")
+        actv_consume_lbl.config(text=f"Applied: {get_dir_size_in_mb(current_selected_game[1])}")
+        mdble_consume_lbl.config(text=f"Modable: unselected")
+        mod_consume_lbl.config(text=f"Mod: unselected")
     return modables_list
 
 def get_folder_paths(folder_path):
     paths = []
-    for modable in os.scandir(folder_path):
-        if modable.is_dir():
-            paths.append(modable.path)
+    for f in os.scandir(folder_path):
+        if f.is_dir():
+            paths.append(f.path)
     return paths
 
+@logging_decorator
 def display_mods(selected_modable=()):
     mods_list_lb.delete(0, ttk.END)
     clear_mod_info()
@@ -234,6 +276,7 @@ def display_mods(selected_modable=()):
     mod_consume_lbl.config(text=f"Mod: unselected")
     return mods_list
 
+@logging_decorator
 def activate_mod(mod=()):
     remove_active_tag()
     active_path = current_selected_game[1]
@@ -268,16 +311,19 @@ def active_mod(modables_path, active_mods_path):
             active_mod = check_path
     return active_mod
 
+@logging_decorator
 def active_mods_display(active_mods_path):
     active_mods_list_lb.delete(0, ttk.END)
-    mod_paths = get_folder_paths(active_mods_path)
-    i = 0
-    for path in mod_paths:
-        active_mods_list_lb.insert(i, path.rsplit("\\", 1)[-1])
-        i += 1
-    mods_list = ttk.Variable(value=mods_list_lb)
+    if path_exists(active_mods_path):
+        mod_paths = get_folder_paths(active_mods_path)
+        i = 0
+        for path in mod_paths:
+            active_mods_list_lb.insert(i, path.rsplit("\\", 1)[-1])
+            i += 1
+        mods_list = ttk.Variable(value=mods_list_lb)
     return mods_list
 
+@logging_decorator
 def deactivate_mod(event=()):
     remove_active_tag()
     active_path = current_selected_game[1]
@@ -290,6 +336,7 @@ def deactivate_mod(event=()):
     display_mods()
     return f"Deactivated {active.rsplit("\\", 1)[-1]}"
     
+@logging_decorator
 def add_mod_info(mod=()):
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
@@ -301,6 +348,7 @@ def add_mod_info(mod=()):
         json.dump(data, f, ensure_ascii=False, indent=4)
     return f"Saved {mod} info"
 
+@logging_decorator
 def display_mod_info_storage(mod=()):
     add_mod_info_b.config(state="normal")
     activate_mod_b.config(state="normal")
@@ -312,6 +360,7 @@ def display_mod_info_storage(mod=()):
     mod_consume_lbl.config(text=f"Mod: {get_dir_size_in_mb(mod_path)}")
     preview_image("storage")
 
+@logging_decorator
 def display_mod_info_active(mod=()):
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
@@ -334,6 +383,7 @@ def populate_mod_info(mod_path):
         mod_url.insert(0, url)
         mod_notes.insert("1.0", notes)
 
+@logging_decorator
 def preview_image(selection):
     if selection == "storage":
         mod_selection = mods_list_lb.curselection()
@@ -421,6 +471,13 @@ def get_dir_size_in_mb(dir_path):
             file_path = os.path.join(dirpath, filename)
             total_size_bytes += os.path.getsize(file_path)
     return f"{round(total_size_bytes / (1024 * 1024)):,}mb"
+
+def path_exists(path):
+    if os.path.exists(path):
+        return True
+    else:
+        messagebox.showerror("Error", f"Path {path} does not exist. Remove and reenter the selected game")
+        return False
 
 
 # DISPLAY CONTENT
