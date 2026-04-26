@@ -1,3 +1,7 @@
+import extractor
+import logging
+import logging.config
+
 import os
 import shutil
 import sqlite3
@@ -7,10 +11,11 @@ import webbrowser
 import threading
 import functools
 import traceback
-import logging
-import logging.config
+import mimetypes
+# import send2trash
 from pythonjsonlogger.json import JsonFormatter
 from urllib.parse import urlparse
+from pathlib import Path
 from tkinter import *
 from tkinter import filedialog
 from tkinter import messagebox
@@ -19,7 +24,7 @@ from ttkbootstrap import Style
 from ttkbootstrap.constants import *
 from PIL import ImageTk, Image
 
-# Note to self: Command to bundle exe was `pyinstaller --onefile --windowed usmm.py`
+# Note to self: Command to bundle exe was `pyinstaller --onefile --windowed --hidden-import=pythonjsonlogger usmm.py`
 
 # potential additional "nice-to-have" features
 # - script runner that can target a specific directory, storage, modable, mod, active
@@ -38,14 +43,17 @@ from PIL import ImageTk, Image
 # - is there a way to save toggled configs into storage?
 
 # ISSUES DISCOVERED FROM USAGE
-# - when activating a mod that is already active, it seems the progress bar is stuck and that perhaps the mod is deactivated but not properly activated... investigate and allow for reactivating of a mod
-# - deactivate/reactivate all button for active mods getting fresh versions from storage?
+# - button to add mod info section from readme
+# - button to open mod info json file in default text editor
+# - add edit game functionality similar to saving mod info where the form fields are populataed or by having a button and dialog popup for the form instead
 # - find better way to adjust image size to  cell so that proportions of are maintained or consider setting image sizes based on screen resolution
 # - consider scaling UI based on screen resolution?
-# - logging for debugging
-# - investigate issue of genshin not having its storage or applied mods folder sizes shown in the status bar (inspect the db)
 # - frames in bottom row same height and N alignment
+# - investigate issue of game not having its storage or applied mods folder sizes shown in the status bar (inspect the db on main system)
 # - active mods list box might need fixed size matching the main control frame
+# - deactivate/reactivate all button for active mods getting fresh versions from storage?
+# DONE - when activating a mod that is already active, it seems the progress bar is stuck and that perhaps the mod is deactivated but not properly activated... investigate and allow for reactivating of a mod
+# DONE - logging for debugging
 # DONE - make sure that if game folders are moved or deleted it doesn't break operations such as displaying active or stored mods and deleting games... os.path.exists() might be a good option. ensure titles are unique and use them for deletions?
 # DONE(changed to json)- ensure ini file edits are taken as string values or at least not able to affect the code. Receiving errors blocking saves when using some unusual characters like "down arrow" or ":""
 # DONE - storage space consumption display
@@ -65,7 +73,7 @@ with open('logging_config.json', 'r') as f:
 logging.config.dictConfig(logging_config)
 logger = logging.getLogger()
 
-def logging_decorator(func):
+def log_this(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         try:
@@ -81,11 +89,11 @@ def logging_decorator(func):
 
     return wrapper
 
-
 # tkinter setup
 root = ttk.Window(themename="superhero")
 root.title("Universal Skin Mod Manager")
 root.iconbitmap("controller.ico")
+root.resizable(False, False)
 main_frame = ttk.Frame(root, padding="10 10 10 10")
 main_frame.grid(column=0, row=0, padx=10, pady=10, sticky=(N, W, E, S))
 main_frame.columnconfigure(4, minsize=250)
@@ -118,25 +126,39 @@ class Game:
         self.applied_path = applied_path
         self.store_path = store_path
 
-@logging_decorator
-def add_game():
+@log_this
+def save_game():
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
+    selected_title = game_list_lb.get(game_list_lb.curselection())
+    game = cur.execute("SELECT title FROM game WHERE title=?", (selected_title,)).fetchone()
+    print(selected_title)
+    print(game)
+    check_game_form()
     title = game_t.get()
     applied_path = game_modables_path.get()
     store_path = game_mods_path.get()
-    check_game_form()
     if game_validation():
-        game = Game(title, applied_path, store_path)
-        cur.execute("INSERT INTO game VALUES (?, ?, ?)",
-                    (title, applied_path, store_path))
-        con.commit()
-        game_list_lb.insert(ttk.END, game.title)
+        if game != None:
+            cur.execute("UPDATE game SET title=?, appliedPath=?, storePath=? WHERE title=?",
+                        (title, applied_path, store_path, game[0]))
+            con.commit()
+            game_title = game[0]
+        else:
+            game = Game(title, applied_path, store_path)
+            cur.execute("INSERT INTO game VALUES (?, ?, ?)",
+                        (title, applied_path, store_path))
+            con.commit()
+            game_title = game.title
+        game_list_lb.delete(0, ttk.END)
+        global game_titles
+        game_titles = set_game_list()
+        game_list_lb.config(listvariable=game_titles)
         game_t.delete(0, ttk.END)
         game_mods_path.delete(0, ttk.END)
         game_modables_path.delete(0, ttk.END)
     con.close()
-    return f"{game.title} added"
+    return f"{game_title} added/updated"
 
 def check_game_form():
     if game_t.get() and game_modables_path.get() and game_mods_path.get():
@@ -145,9 +167,20 @@ def check_game_form():
         b_add_game.config(state="disabled")
 
 def game_validation():
+    # if i keep validation for title being unique, i don't think i need to have 
+        # the db connect again, rather i can pass arguments to the validation
+        # function when i call it to use the same db connection otherwise there
+        # might be threading issues with sqlite
+    # con = sqlite3.connect("usmm.db")
+    # cur = con.cursor()
+    # game = cur.execute("SELECT title FROM game WHERE title=?", (game_t.get(),)).fetchone()
+    # con.close()
     if len(game_t.get()[0]) < 1:
         msg = "Game title must be at least 1 character"
         show_error(msg)
+    # elif game != None:
+    #     msg = "Game title already exists"
+    #     show_error(msg)
     elif os.path.exists(game_modables_path.get()) == False:
         msg = "Path to Applied Mods Folder does not exist"
         show_error(msg)
@@ -160,7 +193,48 @@ def game_validation():
 def show_error(msg):
     messagebox.showerror("Error", msg, icon="error")
 
-@logging_decorator
+@log_this
+def display_game_info():
+    con = sqlite3.connect("usmm.db")
+    cur = con.cursor()
+    title = game_list_lb.get(game_list_lb.curselection())
+    cur.execute("SELECT * FROM game WHERE title=?", (title,))
+    game = cur.fetchone()
+    game_t.delete(0, ttk.END)
+    game_t.insert(0, game[0])
+    game_modables_path.delete(0, ttk.END)
+    game_modables_path.insert(0, game[1])
+    game_mods_path.delete(0, ttk.END)
+    game_mods_path.insert(0, game[2])
+    con.close()
+    check_game_form()
+    set_game_list()
+
+# @log_this
+# def edit_game():
+#     con = sqlite3.connect("usmm.db")
+#     cur = con.cursor()
+#     selected_title = game_list_lb.get(game_list_lb.curselection())
+#     title = game_t.get()
+#     applied_path = game_modables_path.get()
+#     store_path = game_mods_path.get()
+#     cur.execute("""
+#     UPDATE games SET
+#         title = ?,
+#         appliedPath = ?,
+#         storePath = ?
+#     WHERE title = ?
+#     """, (
+#     title,
+#     applied_path,
+#     store_path,
+#     selected_title
+#     ))
+#     con.commit()
+#     con.close()
+#     return f"{selected_title} updated"
+
+@log_this
 def delete_game(title=()):
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
@@ -189,11 +263,11 @@ def browse_folder(entry):
     check_game_form()
     return folder_path
 
-@logging_decorator
+@log_this
 def set_game_list():
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
-    games_l_query = cur.execute("SELECT title FROM game").fetchall()
+    games_l_query = cur.execute("SELECT title FROM game ORDER BY title").fetchall()
     game_list_b = []
     i = 0
     for game in games_l_query:
@@ -203,8 +277,9 @@ def set_game_list():
     con.close()
     return game_titles
 
-@logging_decorator
+@log_this
 def display_modables(selected_game=()):
+    display_game_info()
     modables_list_lb.delete(0, ttk.END)
     mods_list_lb.delete(0, ttk.END)
     clear_mod_info()
@@ -248,7 +323,7 @@ def get_folder_paths(folder_path):
             paths.append(f.path)
     return paths
 
-@logging_decorator
+@log_this
 def display_mods(selected_modable=()):
     mods_list_lb.delete(0, ttk.END)
     clear_mod_info()
@@ -258,6 +333,7 @@ def display_mods(selected_modable=()):
     deactivate_b.config(state="normal")
     explore_mod.config(state="disabled")
     explore_modable.config(state="normal")
+    add_mod_b.config(state="normal")
     selected_modable = modables_list_lb.curselection()
     if selected_modable == (): #consider whether this is still necessary if using default selection
         selected_modable = modables_list_lb.get(0)
@@ -276,12 +352,14 @@ def display_mods(selected_modable=()):
     mod_consume_lbl.config(text=f"Mod: unselected")
     return mods_list
 
-@logging_decorator
+@log_this
 def activate_mod(mod=()):
     remove_active_tag()
     active_path = current_selected_game[1]
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
+    if mod.startswith("ACTIVE-"):
+        mod = mod[len("ACTIVE-"):]
     mod_path = f"{current_selected_modable}\\{mod}"
     active = active_mod(current_selected_modable, active_path)
     if os.path.exists(active):
@@ -311,7 +389,7 @@ def active_mod(modables_path, active_mods_path):
             active_mod = check_path
     return active_mod
 
-@logging_decorator
+@log_this
 def active_mods_display(active_mods_path):
     active_mods_list_lb.delete(0, ttk.END)
     if path_exists(active_mods_path):
@@ -323,7 +401,7 @@ def active_mods_display(active_mods_path):
         mods_list = ttk.Variable(value=mods_list_lb)
     return mods_list
 
-@logging_decorator
+@log_this
 def deactivate_mod(event=()):
     remove_active_tag()
     active_path = current_selected_game[1]
@@ -336,7 +414,62 @@ def deactivate_mod(event=()):
     display_mods()
     return f"Deactivated {active.rsplit("\\", 1)[-1]}"
     
-@logging_decorator
+@log_this
+def add_mod():
+    game = game_list_lb.get(game_list_lb.curselection())
+    open_add_mod_modal(game, current_selected_modable)
+
+@log_this
+def add_mod_to_storage():
+    game = game_list_lb.get(game_list_lb.curselection())
+    src_path = mod_src_path_e.get()
+    name = mod_name_e.get()
+    destined_path = current_selected_modable  
+    url = mod_url_e.get()
+    notes = mod_notes_modal_e.get("1.0", "end-1c")
+    img_found = False
+    archive_found = False
+
+    if not os.path.exists(src_path):
+        show_error("Mod source path does not exist")
+    elif name is None or name == "":
+        show_error("Mod name cannot be empty")
+    else:
+        archive_types = {'.zip', '.rar', '.tar', '.gz', '.7z', '.bz2'}
+        destined_path = destined_path + "\\" + name
+        os.makedirs(destined_path, exist_ok=True)
+        src_path = Path(src_path)
+        for file in src_path.iterdir():
+            if file.is_file():
+                mime_type, _ = mimetypes.guess_type(file)
+                is_image = mime_type and mime_type.startswith('image/')
+                extension = file.suffix.lower()
+                is_archive = extension in archive_types
+            
+                if is_image:
+                    shutil.move(file, f"{destined_path}\\preview.png") #shutil.move(file, destined_path)
+                    # send2trash.send2trash(file)
+                    img_found = True
+                elif is_archive:
+                    extractor.extract_archives(src_path, destined_path)
+                    archive_found = True
+        
+        if img_found == False and archive_found == False:
+            show_error("No images or archives found")
+        elif archive_found == False:
+           show_error("No archives found")
+
+        if url or notes is not None:
+            data = {"mod_info": {"url": url, "notes": notes}}
+            with open(f"{destined_path}\\usmm_mod_info.json", "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+
+        display_mods()
+        
+    return f"Extracted archive, moved image, and saved mod {name}"
+    
+
+@log_this
 def add_mod_info(mod=()):
     mod_selection = mods_list_lb.curselection()
     mod = mods_list_lb.get(mod_selection[0])
@@ -348,7 +481,7 @@ def add_mod_info(mod=()):
         json.dump(data, f, ensure_ascii=False, indent=4)
     return f"Saved {mod} info"
 
-@logging_decorator
+@log_this
 def display_mod_info_storage(mod=()):
     add_mod_info_b.config(state="normal")
     activate_mod_b.config(state="normal")
@@ -360,7 +493,7 @@ def display_mod_info_storage(mod=()):
     mod_consume_lbl.config(text=f"Mod: {get_dir_size_in_mb(mod_path)}")
     preview_image("storage")
 
-@logging_decorator
+@log_this
 def display_mod_info_active(mod=()):
     add_mod_info_b.config(state="disabled")
     activate_mod_b.config(state="disabled")
@@ -383,7 +516,7 @@ def populate_mod_info(mod_path):
         mod_url.insert(0, url)
         mod_notes.insert("1.0", notes)
 
-@logging_decorator
+@log_this
 def preview_image(selection):
     if selection == "storage":
         mod_selection = mods_list_lb.curselection()
@@ -455,12 +588,14 @@ def run_with_progress(command):
         status_label.config(text=activate_mod())
     elif command == "deactivate":
         status_label.config(text=deactivate_mod())
-    elif command == "add_game":
-        status_label.config(text=add_game())
+    elif command == "save_game":
+        status_label.config(text=save_game())
     elif command == "remove_game":
         status_label.config(text=delete_game())
     elif command == "save_mod_info":
         status_label.config(text=add_mod_info())
+    elif command == "add_mod_to_strg":
+        status_label.config(text=add_mod_to_storage())
     progress_bar["value"] = 100
     progress_bar.stop()
 
@@ -527,7 +662,10 @@ modables_list_lb.grid(column=2, row=2, padx=5, pady=5)
 modables_list_lb.selection_set(first=0)
 modables_list_lb.bind('<<ListboxSelect>>', display_mods)
 refresh_modables_b = ttk.Button(control_frame, text="Refresh", command=display_modables)
-refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=N)
+refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=NW)
+add_mod_b = ttk.Button(control_frame, text="Add Mod", command=add_mod)
+add_mod_b.grid(column=2, row=3, padx=5, pady=5, sticky=NE)
+add_mod_b.config(state="disabled")
 
 # mods for modable list display
 mods_list = ttk.Variable(value=[])
@@ -621,7 +759,7 @@ explore_mod = ttk.Button(utility_frame,
 explore_mod.grid(column=1, row=5, sticky=EW, pady=5)
 explore_mod.config(width=28, state="disabled")
 
-# add game form
+# add/edit game form
 add_game_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
 add_game_frame.grid(column=1, row=3, sticky=SW, padx=10, pady=10)
 game_title_l = ttk.Label(add_game_frame, text='Game Title')
@@ -651,7 +789,7 @@ game_mods_path.grid(column=1, sticky=E,row=6, padx=5, pady=5)
 b_add_game = ttk.Button(add_game_frame,
                         text="Add Game",
                         style="main_btn.TButton",
-                        command=lambda: progress_thread("add_game")
+                        command=lambda: progress_thread("save_game")
                         )
 b_add_game.grid(column=1, row=7, padx=5, pady=5)
 b_add_game.config(state="disabled")
@@ -713,5 +851,97 @@ mdble_consume_lbl = ttk.Label(status_frame, text=f"Modable: unselected")
 mdble_consume_lbl.grid(column=5, row=1, sticky=E, padx=10, pady=10)
 mod_consume_lbl = ttk.Label(status_frame, text=f"Mod: unselected")
 mod_consume_lbl.grid(column=6, row=1, sticky=E, padx=10, pady=10)
+
+# browse path toward mod to add where archive and image are
+# explain extraction with label
+# entry for mod name to use in the folder title under the modable path
+# entry for the url to the mod page to go in the json file
+# entry for notes to go in the json file
+# button to add mod
+    # the processing renames the image file to "preview.jpg"
+    # extracts the archive (optional based on tickbox?)
+    # and moves both to the mod path of modable path + mod_name
+    # deletes the archive and the image file (optional based on tickbox?)
+    # refresh the mod list after closing the modal
+
+# Function to center the window after its widgets have determined its natural size
+def center_and_finalize_window(window, parent=None):
+    """
+    Calculates the required size of the window using its layout managers (pack/grid) 
+    and then centers it on the screen.
+    """
+    # 1. Force the window to calculate its natural size based on its contents (Pass 1)
+    # We must run an update/update_idletasks to ensure layout managers have done their job.
+    window.update_idletasks() 
+    
+    # 2. Get the size determined by the layout manager
+    window_width = window.winfo_reqwidth()
+    window_height = window.winfo_reqheight()
+
+    # 3. Get screen dimensions
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    # 4. Calculate center coordinates
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+
+    # 5. Set the final geometry (This repositions it without destroying the content)
+    window.geometry(f'{window_width}x{window_height}+{x}+{y}')
+    window.lift() # Bring to front
+
+mod_src_path_e = StringVar()
+mod_name_e = StringVar()
+mod_url_e = StringVar()
+mod_notes_modal_e = StringVar()
+
+def open_add_mod_modal(game, modable_path):
+    global mod_src_path_e, mod_name_e, mod_url_e, mod_notes_modal_e
+    add_mod_modal = ttk.Toplevel(root)
+    add_mod_modal.title("Add Mod")
+    add_mod_modal.resizable(False, False)
+    add_mod_modal.transient(root)
+    add_mod_modal.grab_set()
+
+    selected_game_l = ttk.Label(add_mod_modal, text=f"Game: {game}")
+    selected_game_l.grid(row=0, column=0, columnspan=2, padx=5, pady=10, sticky=W)
+    
+    modable = modable_path.rsplit("\\", 1)[-1]
+    modable_asset_l = ttk.Label(add_mod_modal, 
+                                    text=f"Modable Asset: {modable}")
+    modable_asset_l.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=W)
+    
+
+    mod_src_path_l = ttk.Label(add_mod_modal, text='Folder of Downloaded Archive and Image:')
+    mod_src_path_l.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=W)
+    mod_src_path_browse_btn = ttk.Button(add_mod_modal,
+                                            text="Browse",
+                                            command= lambda: browse_folder(mod_src_path_e)
+                                            )
+    mod_src_path_browse_btn.grid(row=3, column=0, padx=5, pady=5, sticky=E)
+    mod_src_path_e = ttk.Entry(add_mod_modal, textvariable=mod_src_path_e)
+    mod_src_path_e.grid(row=3, column=1, columnspan=2, padx=5, pady=5, sticky=E)
+
+    mod_name_l = ttk.Label(add_mod_modal, text="Mod Name (mod folder name):")
+    mod_name_l.grid(row=4, column=0, padx=5, pady=10, sticky=W)
+    mod_name_e = ttk.Entry(add_mod_modal, textvariable=mod_name_e)
+    mod_name_e.grid(row=4, column=1, padx=5, pady=5, sticky=E)
+
+    mod_url_l = ttk.Label(add_mod_modal, text="Mod URL (optional):")
+    mod_url_l.grid(row=5, column=0, padx=5, pady=5, sticky=W)
+    mod_url_e = ttk.Entry(add_mod_modal, textvariable=mod_url_e)
+    mod_url_e.grid(row=5, column=1, padx=5, pady=5, sticky=E)
+
+    mod_notes_modal_l = ttk.Label(add_mod_modal, text="Notes (toggles, install info, etc)(optional):")
+    mod_notes_modal_l.grid(row=6, column=0, columnspan=2, padx=5, pady=5, sticky=W)
+    mod_notes_modal_e = ttk.Text(add_mod_modal, width=25, height=14, wrap=ttk.WORD)
+    mod_notes_modal_e.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky=NSEW)
+    
+    submit_add_mod_modal_b = ttk.Button(add_mod_modal, text="Add Mod",
+                                        command=lambda: progress_thread("add_mod_to_strg")
+                                        )
+    submit_add_mod_modal_b.grid(row=8, column=0, columnspan=2, padx=20, pady=20, sticky=NSEW)
+
+    center_and_finalize_window(add_mod_modal, root)
 
 root.mainloop()
