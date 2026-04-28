@@ -89,6 +89,32 @@ def log_this(func):
 
     return wrapper
 
+# Function to center the window after its widgets have determined its natural size
+def center_and_finalize_window(window, parent=None):
+    """
+    Calculates the required size of the window using its layout managers (pack/grid) 
+    and then centers it on the screen.
+    """
+    # 1. Force the window to calculate its natural size based on its contents (Pass 1)
+    # We must run an update/update_idletasks to ensure layout managers have done their job.
+    window.update_idletasks() 
+    
+    # 2. Get the size determined by the layout manager
+    window_width = window.winfo_reqwidth()
+    window_height = window.winfo_reqheight()
+
+    # 3. Get screen dimensions
+    screen_width = window.winfo_screenwidth()
+    screen_height = window.winfo_screenheight()
+
+    # 4. Calculate center coordinates
+    x = (screen_width - window_width) // 2
+    y = (screen_height - window_height) // 2
+
+    # 5. Set the final geometry (This repositions it without destroying the content)
+    window.geometry(f'{window_width}x{window_height}+{x}+{y}')
+    window.lift() # Bring to front
+
 # tkinter setup
 root = ttk.Window(themename="superhero")
 root.title("Universal Skin Mod Manager")
@@ -127,37 +153,30 @@ class Game:
         self.store_path = store_path
 
 @log_this
-def save_game():
+def save_game(modal):
     con = sqlite3.connect("usmm.db")
     cur = con.cursor()
-    selected_title = game_list_lb.get(game_list_lb.curselection())
-    game = cur.execute("SELECT title FROM game WHERE title=?", (selected_title,)).fetchone()
-    print(selected_title)
-    print(game)
     check_game_form()
     title = game_t.get()
     applied_path = game_modables_path.get()
     store_path = game_mods_path.get()
     if game_validation():
-        if game != None:
-            cur.execute("UPDATE game SET title=?, appliedPath=?, storePath=? WHERE title=?",
-                        (title, applied_path, store_path, game[0]))
-            con.commit()
-            game_title = game[0]
-        else:
-            game = Game(title, applied_path, store_path)
-            cur.execute("INSERT INTO game VALUES (?, ?, ?)",
-                        (title, applied_path, store_path))
-            con.commit()
-            game_title = game.title
+        game = Game(title, applied_path, store_path)
+        cur.execute("INSERT INTO game VALUES (?, ?, ?)",
+                    (title, applied_path, store_path))
+        con.commit()
+        game_title = game.title
         game_list_lb.delete(0, ttk.END)
         global game_titles
         game_titles = set_game_list()
         game_list_lb.config(listvariable=game_titles)
-        game_t.delete(0, ttk.END)
+        game_t.set("")
         game_mods_path.delete(0, ttk.END)
         game_modables_path.delete(0, ttk.END)
     con.close()
+
+    modal.event_generate("<<CloseAddGameModal>>")
+
     return f"{game_title} added/updated"
 
 def check_game_form():
@@ -200,39 +219,8 @@ def display_game_info():
     title = game_list_lb.get(game_list_lb.curselection())
     cur.execute("SELECT * FROM game WHERE title=?", (title,))
     game = cur.fetchone()
-    game_t.delete(0, ttk.END)
-    game_t.insert(0, game[0])
-    game_modables_path.delete(0, ttk.END)
-    game_modables_path.insert(0, game[1])
-    game_mods_path.delete(0, ttk.END)
-    game_mods_path.insert(0, game[2])
     con.close()
-    check_game_form()
     set_game_list()
-
-# @log_this
-# def edit_game():
-#     con = sqlite3.connect("usmm.db")
-#     cur = con.cursor()
-#     selected_title = game_list_lb.get(game_list_lb.curselection())
-#     title = game_t.get()
-#     applied_path = game_modables_path.get()
-#     store_path = game_mods_path.get()
-#     cur.execute("""
-#     UPDATE games SET
-#         title = ?,
-#         appliedPath = ?,
-#         storePath = ?
-#     WHERE title = ?
-#     """, (
-#     title,
-#     applied_path,
-#     store_path,
-#     selected_title
-#     ))
-#     con.commit()
-#     con.close()
-#     return f"{selected_title} updated"
 
 @log_this
 def delete_game(title=()):
@@ -310,10 +298,10 @@ def display_modables(selected_game=()):
         global current_selected_game
         current_selected_game = game
         active_mods_display(current_selected_game[1])
-        strg_consume_lbl.config(text=f"Storage: {get_dir_size_in_mb(current_selected_game[0])}")
-        actv_consume_lbl.config(text=f"Applied: {get_dir_size_in_mb(current_selected_game[1])}")
-        mdble_consume_lbl.config(text=f"Modable: unselected")
-        mod_consume_lbl.config(text=f"Mod: unselected")
+        explore_storage.config(text=f"Game Storage: {get_dir_size_in_mb(current_selected_game[0])}")
+        explore_applied.config(text=f"Applied: {get_dir_size_in_mb(current_selected_game[1])}")
+        explore_modable.config(text=f"Modable: NA")
+        explore_mod.config(text=f"Mod: NA")
     return modables_list
 
 def get_folder_paths(folder_path):
@@ -348,8 +336,8 @@ def display_mods(selected_modable=()):
     mods_list = ttk.Variable(value=mods_list_lb)
     global current_selected_modable
     current_selected_modable = modable_path
-    mdble_consume_lbl.config(text=f"Modable: {get_dir_size_in_mb(modable_path)}")
-    mod_consume_lbl.config(text=f"Mod: unselected")
+    explore_modable.config(text=f"Modable Storage: {get_dir_size_in_mb(modable_path)}")
+    explore_mod.config(text=f"Mod: NA")
     return mods_list
 
 @log_this
@@ -420,7 +408,7 @@ def add_mod():
     open_add_mod_modal(game, current_selected_modable)
 
 @log_this
-def add_mod_to_storage():
+def add_mod_to_storage(modal):
     game = game_list_lb.get(game_list_lb.curselection())
     src_path = mod_src_path_e.get()
     name = mod_name_e.get()
@@ -465,8 +453,9 @@ def add_mod_to_storage():
                 json.dump(data, f, ensure_ascii=False, indent=4)
 
         display_mods()
+        modal.event_generate("<<CloseAddModModal>>")
         
-    return f"Extracted archive, moved image, and saved mod {name}"
+    return f"Extracted archive, saved image, and added {name}"
     
 
 @log_this
@@ -490,7 +479,7 @@ def display_mod_info_storage(mod=()):
     mod = mods_list_lb.get(mod_selection[0])
     mod_path = f"{current_selected_modable}\\{mod}"
     populate_mod_info(mod_path)
-    mod_consume_lbl.config(text=f"Mod: {get_dir_size_in_mb(mod_path)}")
+    explore_mod.config(text=f"Mod: {get_dir_size_in_mb(mod_path)}")
     preview_image("storage")
 
 @log_this
@@ -579,23 +568,29 @@ def mod_web(url):
 def progress_thread(command):
     threading.Thread(target=run_with_progress, args=(command,)).start()
 
-def run_with_progress(command):
+def run_with_progress(arg):
     progress_bar["maximum"] = 100
     progress_bar["value"] = 0
     progress_bar.start()
     status_label.config(text="Processing...")
-    if command == "activate":
+    if type(arg) is dict:
+        command = arg["cmd"]
+        modal = arg["modal"]
+    else:
+        command = arg
+
+    if arg == "activate":
         status_label.config(text=activate_mod())
     elif command == "deactivate":
         status_label.config(text=deactivate_mod())
     elif command == "save_game":
-        status_label.config(text=save_game())
+        status_label.config(text=save_game(modal))
     elif command == "remove_game":
         status_label.config(text=delete_game())
     elif command == "save_mod_info":
         status_label.config(text=add_mod_info())
     elif command == "add_mod_to_strg":
-        status_label.config(text=add_mod_to_storage())
+        status_label.config(text=add_mod_to_storage(modal))
     progress_bar["value"] = 100
     progress_bar.stop()
 
@@ -640,12 +635,26 @@ game_list_lb = Listbox(control_frame,
 game_list_lb.grid(column=1, row=2, padx=5, pady=5)
 game_list_lb.selection_set(first=0)
 game_list_lb.bind('<<ListboxSelect>>', display_modables)
+add_game = ttk.Button(control_frame,
+                         text="Add Game",
+                         style="main_btn.TButton",
+                         command=lambda: open_add_game_modal()
+                         )
+add_game.grid(column=1, row=3, padx=5, pady=5, sticky=NW)
+
 remove_game = ttk.Button(control_frame,
                          text="Remove Game",
                          style="dull_btn.TButton",
                          command=lambda: progress_thread("remove_game")
                          )
-remove_game.grid(column=1, row=3, padx=5, pady=5, sticky=N)
+remove_game.grid(column=1, row=3, padx=5, pady=5, sticky=NE)
+explore_storage = ttk.Button(control_frame,
+                            text="Game Mod Storage",
+                            style="alt_btn.TButton",
+                            command= lambda: explore_folder("storage")
+                            )
+explore_storage.grid(column=1, row=4, sticky=EW, padx=5, pady=5)
+explore_storage.config(state="disabled")
 
 # modable list display
 modables_list = ttk.Variable(value=[])
@@ -661,11 +670,22 @@ modables_list_lb = Listbox(control_frame,
 modables_list_lb.grid(column=2, row=2, padx=5, pady=5)
 modables_list_lb.selection_set(first=0)
 modables_list_lb.bind('<<ListboxSelect>>', display_mods)
-refresh_modables_b = ttk.Button(control_frame, text="Refresh", command=display_modables)
-refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=NW)
-add_mod_b = ttk.Button(control_frame, text="Add Mod", command=add_mod)
-add_mod_b.grid(column=2, row=3, padx=5, pady=5, sticky=NE)
+add_mod_b = ttk.Button(control_frame,
+                       text="Add Mod",
+                       style="main_btn.TButton",
+                       command=add_mod
+                       )
+add_mod_b.grid(column=2, row=3, padx=5, pady=5, sticky=NW)
 add_mod_b.config(state="disabled")
+refresh_modables_b = ttk.Button(control_frame, text="Refresh", command=display_modables)
+refresh_modables_b.grid(column=2, row=3, padx=5, pady=5, sticky=NE)
+explore_modable = ttk.Button(control_frame,
+                             text="Modable Asset Storage",
+                             style="alt_btn.TButton",
+                             command= lambda: explore_folder("modable")
+                             )
+explore_modable.grid(column=2, row=4, sticky=EW, padx=5, pady=5)
+explore_modable.config(state="disabled")
 
 # mods for modable list display
 mods_list = ttk.Variable(value=[])
@@ -699,6 +719,13 @@ deactivate_b = ttk.Button(mod_button_frame,
                           )
 deactivate_b.grid(column=3, row=1, padx=2, pady=5, sticky=N)
 deactivate_b.config(state="disabled")
+explore_mod = ttk.Button(control_frame,
+                         text="Mod",
+                         style="alt_btn.TButton",
+                         command= lambda: explore_folder("mod")
+                         )
+explore_mod.grid(column=3, row=4, sticky=EW, padx=5, pady=5)
+explore_mod.config( state="disabled")
 
 # active mods for game display
 active_games_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
@@ -716,92 +743,22 @@ active_mods_list_lb = Listbox(active_games_frame,
 active_mods_list_lb.grid(column=1, row=2, padx=5, pady=5)
 active_mods_list_lb.selection_set(first=0)
 active_mods_list_lb.bind('<<ListboxSelect>>', display_mod_info_active)
-
-# frame for utility buttons and add game form
-explore_add_frame = ttk.Frame(main_frame)
-explore_add_frame.grid(column=1, row=4, sticky=N)
-explore_add_frame.columnconfigure(1, weight=1, minsize=250) #weight values creating extra spaces?
-explore_add_frame.rowconfigure((1, 2), weight=1)
-
-# utility buttons
-utility_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
-utility_frame.grid(column=1, row=1,sticky=N, padx=10, pady=10)
-utility_frame.columnconfigure(0, weight=1) #weight values creating extra spaces?
-utility_frame.rowconfigure(0, weight=1)
-utility_btn_l = ttk.Label(utility_frame, text='Explore Selection Folders')
-utility_btn_l.grid(column=1, row=1, sticky=EW)
-explore_storage = ttk.Button(utility_frame,
-                            text="Game Mod Storage",
-                            style="alt_btn.TButton",
-                            command= lambda: explore_folder("storage")
-                            )
-explore_storage.grid(column=1, row=2, sticky=EW, pady=5)
-explore_storage.config(width=28, state="disabled")
-explore_applied = ttk.Button(utility_frame,
+explore_applied = ttk.Button(active_games_frame,
                              text="Game Applied Mods",
                              style="alt_btn.TButton",
                              command= lambda: explore_folder("applied")
                              )
-explore_applied.grid(column=1, row=3, sticky=EW, pady=5)
-explore_applied.config(width=28, state="disabled")
-explore_modable = ttk.Button(utility_frame,
-                             text="Modable Asset Storage",
-                             style="alt_btn.TButton",
-                             command= lambda: explore_folder("modable")
-                             )
-explore_modable.grid(column=1, row=4, sticky=EW, pady=5)
-explore_modable.config(width=28, state="disabled")
-explore_mod = ttk.Button(utility_frame,
-                         text="Mod",
-                         style="alt_btn.TButton",
-                         command= lambda: explore_folder("mod")
-                         )
-explore_mod.grid(column=1, row=5, sticky=EW, pady=5)
-explore_mod.config(width=28, state="disabled")
-
-# add/edit game form
-add_game_frame = ttk.Frame(explore_add_frame, padding="20 10 20 10", style="control_frame.TFrame")
-add_game_frame.grid(column=1, row=3, sticky=SW, padx=10, pady=10)
-game_title_l = ttk.Label(add_game_frame, text='Game Title')
-game_title_l.grid(column=1, sticky=W, columnspan=2, row=1, padx=5, pady=5)
-game_t = StringVar()
-game_t = ttk.Entry(add_game_frame, textvariable=game_t)
-game_t.grid(column=1, row=2, padx=5, pady=5)
-game_path_l = ttk.Label(add_game_frame, text='Path to Applied Mods Folder')
-game_path_l.grid(column=1, sticky=W, columnspan=2, row=3, padx=5, pady=1)
-game_modables_path_browse_btn = ttk.Button(add_game_frame,
-                                           text="Browse",
-                                           command= lambda: browse_folder(game_modables_path)
-                                           )
-game_modables_path_browse_btn.grid(column=2, row=4, sticky=W, pady=5)
-game_modables_path = StringVar()
-game_modables_path = ttk.Entry(add_game_frame, textvariable=game_modables_path)
-game_modables_path.grid(column=1, sticky=E, row=4, padx=5, pady=5)
-game_path_l = ttk.Label(add_game_frame, text='Path to Mod Storage Folder')
-game_path_l.grid(column=1, sticky=W, columnspan=2, row=5, padx=5, pady=1)
-game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse", 
-                                               command=lambda: browse_folder(game_mods_path)
-                                               )
-game_modable_mods_path_browse_btn.grid(column=2, row=6, sticky=W, pady=5)
-game_mods_path = StringVar()
-game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path)
-game_mods_path.grid(column=1, sticky=E,row=6, padx=5, pady=5)
-b_add_game = ttk.Button(add_game_frame,
-                        text="Add Game",
-                        style="main_btn.TButton",
-                        command=lambda: progress_thread("save_game")
-                        )
-b_add_game.grid(column=1, row=7, padx=5, pady=5)
-b_add_game.config(state="disabled")
+explore_applied.grid(column=1, row=3, sticky=EW, padx=5, pady=5)
+explore_applied.config(state="disabled")
 
 # mod info form/display
 add_mod_inf = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
-add_mod_inf.grid(column=2, row=4, sticky=NW, padx=10, pady=10)
+add_mod_inf.grid(column=1, row=4, sticky=NW)
 mod_url_l = ttk.Label(add_mod_inf, text='Mod URL')
 mod_url_l.grid(column=1, sticky=W, row=1, padx=5, pady=5)
 mod_url = StringVar()
 mod_url = ttk.Entry(add_mod_inf, textvariable=mod_url, width=17)
-mod_url.grid(column=1, row=2, sticky=W, padx=5, pady=5)
+mod_url.grid(column=1,row=2, sticky=W, padx=5, pady=5)
 mod_url_b = ttk.Button(add_mod_inf, text="Open",
                        command= lambda: mod_web(mod_url.get())
                        )
@@ -809,19 +766,19 @@ mod_url_b.grid(column=1, row=2, sticky=E)
 mod_notes_add_l = ttk.Label(add_mod_inf, text='Notes (toggles, install info, etc)')
 mod_notes_add_l.grid(column=1, sticky=W, row=3, padx=5, pady=1)
 mod_notes = StringVar()
-mod_notes = ttk.Text(add_mod_inf, width=25, height=14, wrap=ttk.WORD)
-mod_notes.grid(column=1, row=4, padx=5, pady=5)
+mod_notes = ttk.Text(add_mod_inf, width=63, height=14, wrap=ttk.WORD)
+mod_notes.grid(column=1, columnspan=2, row=4, padx=5, pady=5)
 add_mod_info_b = ttk.Button(add_mod_inf,
                             text="Save Mod Info",
                             style="main_btn.TButton",
                             command=lambda: progress_thread("save_mod_info")
                             )
-add_mod_info_b.grid(column=1, row=7, padx=5, pady=5)
+add_mod_info_b.grid(column=1, columnspan=2, row=7, padx=5, pady=5)
 add_mod_info_b.config(state="disabled")
 
 # mod preview image display
 mod_img_frame = ttk.Frame(main_frame, padding="20 20 20 20", style="control_frame.TFrame")
-mod_img_frame.grid(column=3, columnspan=3, row=4, sticky=NW, padx=10, pady=10)
+mod_img_frame.grid(column=2, columnspan=3, row=4, sticky=NW)
 mod_img_frame.columnconfigure(1, weight=1, minsize=501) #weight values creating extra spaces?
 mod_img_frame.rowconfigure(2, weight=1, minsize=501)
 mod_img_l = ttk.Label(mod_img_frame, text="Mod Preview Image")
@@ -834,62 +791,74 @@ mod_img_lb.grid(column=1, row=2)
 
 # progress bar and status info
 status_frame = ttk.Frame(main_frame, height=20, style="control_frame.TFrame")
-status_frame.grid(column=1, row=5, columnspan=4, sticky="sew")
+status_frame.grid(column=1, row=5, columnspan=4, sticky="sew", pady=10)
 status_frame.columnconfigure(2, minsize=400)
 status_frame.columnconfigure((3, 4, 5, 6), minsize=65)
 progress_bar = ttk.Progressbar(status_frame, orient="horizontal", length=100, mode="determinate")
 progress_bar.grid(column=1, row=1, padx=10, pady=10)
 status_label = ttk.Label(status_frame, text="Idle")
-status_label.grid(column=2, row=1, sticky=W, padx=10, pady=10)
+status_label.grid(column=2, row=1, sticky=W, padx=10, pady=10)# max size? or weight approach?
 
-# storage consumption
-strg_consume_lbl = ttk.Label(status_frame, text=f"Storage: unselected")
-strg_consume_lbl.grid(column=3, row=1, sticky=E, padx=10, pady=10)
-actv_consume_lbl = ttk.Label(status_frame, text=f"Applied: unselected")
-actv_consume_lbl.grid(column=4, row=1, sticky=E, padx=10, pady=10)
-mdble_consume_lbl = ttk.Label(status_frame, text=f"Modable: unselected")
-mdble_consume_lbl.grid(column=5, row=1, sticky=E, padx=10, pady=10)
-mod_consume_lbl = ttk.Label(status_frame, text=f"Mod: unselected")
-mod_consume_lbl.grid(column=6, row=1, sticky=E, padx=10, pady=10)
+# center main window after all elements are placed in base frames 
+center_and_finalize_window(root)
 
-# browse path toward mod to add where archive and image are
-# explain extraction with label
-# entry for mod name to use in the folder title under the modable path
-# entry for the url to the mod page to go in the json file
-# entry for notes to go in the json file
-# button to add mod
-    # the processing renames the image file to "preview.jpg"
-    # extracts the archive (optional based on tickbox?)
-    # and moves both to the mod path of modable path + mod_name
-    # deletes the archive and the image file (optional based on tickbox?)
-    # refresh the mod list after closing the modal
+# display for "add game" modal
+game_t = StringVar()
+game_modables_path = StringVar()
+game_mods_path = StringVar()
 
-# Function to center the window after its widgets have determined its natural size
-def center_and_finalize_window(window, parent=None):
-    """
-    Calculates the required size of the window using its layout managers (pack/grid) 
-    and then centers it on the screen.
-    """
-    # 1. Force the window to calculate its natural size based on its contents (Pass 1)
-    # We must run an update/update_idletasks to ensure layout managers have done their job.
-    window.update_idletasks() 
-    
-    # 2. Get the size determined by the layout manager
-    window_width = window.winfo_reqwidth()
-    window_height = window.winfo_reqheight()
+# frame for add game form
+explore_add_frame = ttk.Frame(main_frame)
+explore_add_frame.grid(column=1, row=4, sticky=N)
+explore_add_frame.columnconfigure(1, weight=1, minsize=250) #weight values creating extra spaces?
+explore_add_frame.rowconfigure((1, 2), weight=1)
 
-    # 3. Get screen dimensions
-    screen_width = window.winfo_screenwidth()
-    screen_height = window.winfo_screenheight()
+def open_add_game_modal():
+    global game_t, game_modables_path, game_mods_path
+    add_game_modal = ttk.Toplevel(root)
+    add_game_modal.title("Add Game")
+    add_game_modal.resizable(False, False)
+    add_game_modal.transient(root)
+    add_game_modal.grab_set()
+    add_game_modal.bind("<<CloseAddGameModal>>", lambda event: add_game_modal.destroy())
 
-    # 4. Calculate center coordinates
-    x = (screen_width - window_width) // 2
-    y = (screen_height - window_height) // 2
+    # add/edit game form
+    add_game_frame = ttk.Frame(add_game_modal, padding="20 10 20 10", style="control_frame.TFrame")
+    add_game_frame.grid(column=1, row=3, sticky=SW, padx=10, pady=10)
+    game_title_l = ttk.Label(add_game_frame, text='Game Title')
+    game_title_l.grid(column=1, sticky=W, columnspan=2, row=1, padx=5, pady=5)
+    game_t_e = ttk.Entry(add_game_frame, textvariable=game_t)
+    game_t_e.grid(column=1, row=2, padx=5, pady=5)
+    game_path_l = ttk.Label(add_game_frame, text='Path to Applied Mods Folder')
+    game_path_l.grid(column=1, sticky=W, columnspan=2, row=3, padx=5, pady=1)
+    game_modables_path_browse_btn = ttk.Button(add_game_frame,
+                                            text="Browse",
+                                            command= lambda: browse_folder(game_modables_path)
+                                            )
+    game_modables_path_browse_btn.grid(column=2, row=4, sticky=W, pady=5)
+    game_modables_path = ttk.Entry(add_game_frame, textvariable=game_modables_path)
+    game_modables_path.grid(column=1, sticky=E, row=4, padx=5, pady=5)
+    game_path_l = ttk.Label(add_game_frame, text='Path to Mod Storage Folder')
+    game_path_l.grid(column=1, sticky=W, columnspan=2, row=5, padx=5, pady=1)
+    game_modable_mods_path_browse_btn = ttk.Button(add_game_frame, text="Browse", 
+                                                command=lambda: browse_folder(game_mods_path)
+                                                )
+    game_modable_mods_path_browse_btn.grid(column=2, row=6, sticky=W, pady=5)
+    game_mods_path = ttk.Entry(add_game_frame, textvariable=game_mods_path)
+    game_mods_path.grid(column=1, sticky=E,row=6, padx=5, pady=5)
+    arg = {"cmd":"save_game", "modal": add_game_modal}
+    global b_add_game
+    b_add_game = ttk.Button(add_game_frame,
+                            text="Add Game",
+                            style="main_btn.TButton",
+                            command=lambda: progress_thread(arg)
+                            )
+    b_add_game.grid(column=1, row=7, padx=5, pady=5)
+    b_add_game.config(state="disabled")
 
-    # 5. Set the final geometry (This repositions it without destroying the content)
-    window.geometry(f'{window_width}x{window_height}+{x}+{y}')
-    window.lift() # Bring to front
+    center_and_finalize_window(add_game_modal, root)
 
+# Display for "add mod" modal
 mod_src_path_e = StringVar()
 mod_name_e = StringVar()
 mod_url_e = StringVar()
@@ -902,6 +871,7 @@ def open_add_mod_modal(game, modable_path):
     add_mod_modal.resizable(False, False)
     add_mod_modal.transient(root)
     add_mod_modal.grab_set()
+    add_mod_modal.bind("<<CloseAddModModal>>", lambda event: add_mod_modal.destroy())
 
     selected_game_l = ttk.Label(add_mod_modal, text=f"Game: {game}")
     selected_game_l.grid(row=0, column=0, columnspan=2, padx=5, pady=10, sticky=W)
@@ -911,7 +881,6 @@ def open_add_mod_modal(game, modable_path):
                                     text=f"Modable Asset: {modable}")
     modable_asset_l.grid(row=1, column=0, columnspan=2, padx=5, pady=10, sticky=W)
     
-
     mod_src_path_l = ttk.Label(add_mod_modal, text='Folder of Downloaded Archive and Image:')
     mod_src_path_l.grid(row=2, column=0, columnspan=2, padx=5, pady=10, sticky=W)
     mod_src_path_browse_btn = ttk.Button(add_mod_modal,
@@ -937,8 +906,9 @@ def open_add_mod_modal(game, modable_path):
     mod_notes_modal_e = ttk.Text(add_mod_modal, width=25, height=14, wrap=ttk.WORD)
     mod_notes_modal_e.grid(row=7, column=0, columnspan=2, padx=5, pady=5, sticky=NSEW)
     
+    arg = {"cmd":"add_mod_to_strg", "modal": add_mod_modal}
     submit_add_mod_modal_b = ttk.Button(add_mod_modal, text="Add Mod",
-                                        command=lambda: progress_thread("add_mod_to_strg")
+                                        command=lambda: progress_thread(arg)
                                         )
     submit_add_mod_modal_b.grid(row=8, column=0, columnspan=2, padx=20, pady=20, sticky=NSEW)
 
